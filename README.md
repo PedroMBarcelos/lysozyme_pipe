@@ -19,13 +19,13 @@ Automated pipeline for homology search, filtering, realignment, and pseudogene c
 
 ## Overview
 
-This pipeline implements a rigorous workflow for identifying and characterizing lysozyme genes and pseudogenes in bacterial genomes through homology analysis and inactivating mutation detection.
+This pipeline implements a workflow for identifying and characterizing lysozyme genes and pseudogenes in bacterial genomes through homology analysis and inactivating mutation detection.
 
 ### Key Features
 
 - BLAST-based homology search (tblastn) with optimized parameters
 - Quality filtering using strict identity and score thresholds
-- Optional rigorous realignment with SSEARCH (Smith-Waterman algorithm)
+- Rigorous realignment with SSEARCH (Smith-Waterman algorithm) - **Mandatory**
 - Adjacent HSP merging using BEDTools
 - Best-hit selection via score density calculation
 - Comprehensive pseudogene detection and mutation quantification
@@ -36,9 +36,9 @@ This pipeline implements a rigorous workflow for identifying and characterizing 
 
 ### External Tools
 
-- NCBI BLAST+ (>= 2.10.0)
-- BEDTools (>= 2.29.0)
-- FASTA36 suite (optional, for SSEARCH realignment)
+- NCBI BLAST+ (>= 2.10.0) - **Required**
+- BEDTools (>= 2.29.0) - **Required**
+- FASTA36 suite (ssearch36) - **Required**
 
 The pipeline can automatically download and install these tools locally if not found in system PATH.
 
@@ -82,17 +82,7 @@ Basic usage for analyzing a single genome:
 python pipeline.py \
     --input genome.fasta \
     --lysozymes reference_lysozymes.fasta \
-    --output results/
-```
-
-With SSEARCH realignment:
-
-```bash
-python pipeline.py \
-    --input genome.fasta \
-    --lysozymes reference_lysozymes.fasta \
     --output results/ \
-    --enable-ssearch \
     --num-threads 8
 ```
 
@@ -162,12 +152,13 @@ Removes low-quality alignments based on:
 - Minimum BLOSUM62 score: 120 (default)
 - Discard rule: BOTH conditions must fail to remove
 
-### 4. SSEARCH Realignment (Optional)
+### 4. SSEARCH Realignment
 Re-aligns filtered hits using Smith-Waterman algorithm with statistical permutation testing.
 
 Parameters:
 - Shuffles: 1000 permutations
 - Statistical significance threshold: p < 0.001
+- **Mandatory step** for accurate pseudogene detection
 
 ### 5. Region Merging
 Merges overlapping/adjacent HSPs using BEDTools merge.
@@ -205,7 +196,7 @@ output/
 ├── blast/
 │   ├── genome_db.*                    # BLAST database files
 │   └── blast_results.tsv              # Raw BLAST output
-├── ssearch/                           # (if --enable-ssearch)
+├── ssearch/
 │   └── ssearch_results.tsv            # SSEARCH realignments
 ├── merge/
 │   ├── blast_hits.bed                 # BED format regions
@@ -310,7 +301,6 @@ Core protein definition:
 - `--min-score`: Minimum BLOSUM62 score (default: 120)
 
 ### SSEARCH Parameters
-- `--enable-ssearch`: Enable SSEARCH realignment (default: disabled)
 - `--ssearch-shuffles`: Number of permutations (default: 1000)
 
 ### Pseudogene Detection
@@ -334,10 +324,11 @@ sudo apt install build-essential zlib1g-dev
 ```
 
 ### SSEARCH not available
-SSEARCH is optional. To install:
+SSEARCH is required for the pipeline. To install:
 ```bash
 sudo apt install fasta3       # Debian/Ubuntu
 ```
+Alternatively, the pipeline will attempt automatic installation.
 
 ### Low pseudogene count
 Check alignment quality with `--verbose` flag. Consider adjusting:
@@ -355,16 +346,3 @@ Ensure:
 - `pathogenicity` values are: `pathogenic`, `non-pathogenic`, or `unknown`
 - TSV file uses tab separators (not spaces)
 
-## Citation
-
-If you use this pipeline in your research, please cite:
-
-[Pipeline repository and documentation]
-
-## License
-
-This pipeline is provided as-is for research and educational purposes.
-
-## Contact
-
-For questions, issues, or contributions, please open an issue in the repository.

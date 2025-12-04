@@ -153,11 +153,6 @@ Exemplos de uso:
         help='Número de threads para SSEARCH paralelo (padrão: CPU_COUNT-1)'
     )
     execution.add_argument(
-        '--skip-ssearch',
-        action='store_true',
-        help='Pula a etapa de realinhamento com SSEARCH (mais rápido, menos preciso)'
-    )
-    execution.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Exibe mensagens de debug detalhadas'
@@ -198,7 +193,6 @@ def run_pipeline(
     min_identity: float = MIN_IDENTITY_THRESHOLD,
     min_score: int = MIN_BLOSUM62_SCORE,
     min_disablements: int = 1,
-    skip_ssearch: bool = False,
     num_threads: int = None,
     deps: dict = None
 ) -> None:
@@ -213,7 +207,6 @@ def run_pipeline(
         min_identity: Minimum identity for filtering
         min_score: Minimum score for filtering
         min_disablements: Minimum mutations to classify as pseudogene
-        skip_ssearch: If True, skip SSEARCH realignment
         num_threads: Number of threads for parallelization
         deps: Dependencies dictionary from verify_and_install_dependencies()
     """
@@ -411,7 +404,6 @@ def main():
                 min_identity=args.min_identity,
                 min_score=args.min_score,
                 min_disablements=args.min_disablements,
-                skip_ssearch=args.skip_ssearch,
                 num_threads=args.num_threads,
                 deps=deps  # Pass deps to avoid re-verification
             )
