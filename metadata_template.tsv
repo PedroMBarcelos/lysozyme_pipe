@@ -1,0 +1,19 @@
+# Arquivo de Metadados para Análise Comparativa
+# Formato: TSV (Tab-Separated Values)
+#
+# Colunas OBRIGATÓRIAS:
+#   - genome_id: Identificador do genoma (deve corresponder ao usado no pipeline)
+#   - pathogenicity: Classificação (valores aceitos: pathogenic, non-pathogenic, unknown)
+#
+# Colunas OPCIONAIS (exemplos):
+#   - species: Espécie bacteriana
+#   - strain: Cepa/strain
+#   - source: Fonte de isolamento (clinical, environmental, food, etc.)
+#   - isolation_date: Data de isolamento
+#   - geographic_location: Local de isolamento
+#   - host: Hospedeiro (se aplicável)
+#   - reference: Referência/estudo de origem
+
+genome_id	pathogenicity	species	strain	source	isolation_date	notes
+genome1	pathogenic	Escherichia coli	O157:H7	clinical	2023-01-15	Isolado de surto alimentar
+genome2	non-pathogenic	Escherichia coli	K-12	laboratory	1922-01-01	Cepa laboratorial padrão

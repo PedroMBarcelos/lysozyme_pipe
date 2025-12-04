@@ -1,0 +1,273 @@
+"""
+Module for score density calculation and best hit selection.
+Implements pipeline step 5: Score Density Calculation and Selection.
+"""
+
+import logging
+from typing import List, Dict, Tuple, Optional
+from dataclasses import dataclass
+from collections import defaultdict
+
+from src.blast_filter import BlastHit
+from src.bedtools_merge import GenomicRegion
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ProteinHitGroup:
+    """Group of HSPs for a specific protein in a region."""
+    
+    protein_id: str           # ID da proteína (qseqid)
+    hsps: List[BlastHit]      # Lista de HSPs
+    total_score: int          # Soma dos scores
+    total_length: int         # Soma dos comprimentos das sequências
+    score_density: float      # Densidade de score
+    
+    @classmethod
+    def from_hsps(cls, protein_id: str, hsps: List[BlastHit]) -> 'ProteinHitGroup':
+        """
+        Create a ProteinHitGroup from a list of HSPs.
+        
+        Args:
+            protein_id: Protein ID
+            hsps: List of HSPs for this protein
+        
+        Returns:
+            ProteinHitGroup object with calculated density
+        """
+        total_score = sum(hsp.score for hsp in hsps)
+        total_length = sum(hsp.length for hsp in hsps)
+        
+        # Calculate density: score / length
+        score_density = total_score / total_length if total_length > 0 else 0.0
+        
+        return cls(
+            protein_id=protein_id,
+            hsps=hsps,
+            total_score=total_score,
+            total_length=total_length,
+            score_density=score_density
+        )
+
+
+@dataclass
+class RegionAnnotation:
+    """Complete annotation of a genomic region."""
+    
+    region: GenomicRegion           # Região genômica fundida
+    best_protein: ProteinHitGroup   # Proteína com maior densidade de score
+    all_proteins: List[ProteinHitGroup]  # Todas as proteínas que mapearam
+    
+    def to_dict(self) -> Dict:
+        """Convert annotation to dictionary."""
+        return {
+            'chromosome': self.region.chromosome,
+            'start': self.region.start,
+            'end': self.region.end,
+            'length': self.region.length,
+            'strand': self.region.strand,
+            'best_protein_id': self.best_protein.protein_id,
+            'best_protein_score_density': self.best_protein.score_density,
+            'best_protein_total_score': self.best_protein.total_score,
+            'best_protein_total_length': self.best_protein.total_length,
+            'best_protein_num_hsps': len(self.best_protein.hsps),
+            'num_competing_proteins': len(self.all_proteins)
+        }
+
+
+def calculate_score_density(hsps: List[BlastHit]) -> float:
+    """
+    Calculate score density for a set of HSPs.
+    
+    Density = Σ(Score_HSPs) / Σ(Length_sequences)
+    
+    Args:
+        hsps: List of HSPs (High Scoring Pairs)
+    
+    Returns:
+        Score density
+    """
+    if not hsps:
+        return 0.0
+    
+    total_score = sum(hsp.score for hsp in hsps)
+    total_length = sum(hsp.length for hsp in hsps)
+    
+    density = total_score / total_length if total_length > 0 else 0.0
+    
+    logger.debug(
+        f"Density calculated: {density:.2f} "
+        f"(score={total_score}, length={total_length}, num_hsps={len(hsps)})"
+    )
+    
+    return density
+
+
+def group_hsps_by_protein(hsps: List[BlastHit]) -> Dict[str, List[BlastHit]]:
+    """
+    Group HSPs by query protein.
+    
+    Args:
+        hsps: List of HSPs
+    
+    Returns:
+        Dictionary mapping protein_id to list of its HSPs
+    """
+    protein_groups = defaultdict(list)
+    
+    for hsp in hsps:
+        protein_groups[hsp.qseqid].append(hsp)
+    
+    return dict(protein_groups)
+
+
+def select_best_protein_for_region(
+    region: GenomicRegion,
+    region_hsps: List[BlastHit]
+) -> RegionAnnotation:
+    """
+    Select protein with highest score density for a region.
+    
+    Args:
+        region: Merged genomic region
+        region_hsps: List of HSPs that map to this region
+    
+    Returns:
+        Region annotation with best protein selected
+    """
+    logger.debug(
+        f"Selecting best protein for region "
+        f"{region.chromosome}:{region.start}-{region.end}"
+    )
+    
+    # Group HSPs by protein
+    protein_groups = group_hsps_by_protein(region_hsps)
+    
+    # Calculate density for each protein
+    protein_hit_groups = []
+    for protein_id, hsps in protein_groups.items():
+        hit_group = ProteinHitGroup.from_hsps(protein_id, hsps)
+        protein_hit_groups.append(hit_group)
+    
+    # Select protein with highest density
+    best_protein = max(
+        protein_hit_groups,
+        key=lambda x: x.score_density
+    )
+    
+    logger.debug(
+        f"Best protein for region {region.chromosome}:{region.start}-{region.end}: "
+        f"{best_protein.protein_id} (density={best_protein.score_density:.2f})"
+    )
+    
+    # Update query_ids list in region
+    region.query_ids = [best_protein.protein_id]
+    
+    return RegionAnnotation(
+        region=region,
+        best_protein=best_protein,
+        all_proteins=protein_hit_groups
+    )
+
+
+def assign_hsps_to_regions(
+    regions: List[GenomicRegion],
+    all_hsps: List[BlastHit]
+) -> Dict[Tuple[str, int, int], List[BlastHit]]:
+    """
+    Assign HSPs to merged genomic regions.
+    
+    Args:
+        regions: List of merged genomic regions
+        all_hsps: List of all HSPs
+    
+    Returns:
+        Dictionary mapping (chromosome, start, end) to list of HSPs
+    """
+    logger.debug(f"Assigning {len(all_hsps)} HSPs to {len(regions)} regions")
+    
+    region_hsps_map = defaultdict(list)
+    
+    for hsp in all_hsps:
+        # HSP coordinates
+        hsp_chrom = hsp.sseqid
+        hsp_start = min(hsp.sstart, hsp.send)
+        hsp_end = max(hsp.sstart, hsp.send)
+        
+        # Find regions that overlap with this HSP
+        for region in regions:
+            if region.chromosome != hsp_chrom:
+                continue
+            
+            # Check overlap
+            if hsp_start <= region.end and hsp_end >= region.start:
+                region_key = (region.chromosome, region.start, region.end)
+                region_hsps_map[region_key].append(hsp)
+    
+    logger.debug(f"HSPs assigned to {len(region_hsps_map)} regions")
+    return dict(region_hsps_map)
+
+
+def annotate_regions_with_best_proteins(
+    regions: List[GenomicRegion],
+    all_hsps: List[BlastHit]
+) -> List[RegionAnnotation]:
+    """
+    Annotate each genomic region with the best protein (highest score density).
+    
+    Args:
+        regions: List of merged genomic regions
+        all_hsps: List of all filtered HSPs
+    
+    Returns:
+        List of region annotations with best proteins
+    """
+    logger.debug(f"Annotating {len(regions)} regions with best proteins...")
+    
+    # Assign HSPs to regions
+    region_hsps_map = assign_hsps_to_regions(regions, all_hsps)
+    
+    # For each region, select best protein
+    annotations = []
+    for region in regions:
+        region_key = (region.chromosome, region.start, region.end)
+        region_hsps = region_hsps_map.get(region_key, [])
+        
+        if not region_hsps:
+            logger.warning(
+                f"No HSP found for region "
+                f"{region.chromosome}:{region.start}-{region.end}"
+            )
+            continue
+        
+        annotation = select_best_protein_for_region(region, region_hsps)
+        annotations.append(annotation)
+    
+    logger.debug(f"{len(annotations)} regions annotated")
+    return annotations
+
+
+def save_region_annotations(
+    annotations: List[RegionAnnotation],
+    output_path
+) -> None:
+    """
+    Save region annotations to TSV file.
+    
+    Args:
+        annotations: List of region annotations
+        output_path: Path to output file
+    """
+    import pandas as pd
+    
+    logger.debug(f"Saving {len(annotations)} annotations to: {output_path}")
+    
+    data = [ann.to_dict() for ann in annotations]
+    df = pd.DataFrame(data)
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, sep='\t', index=False)
+    
+    logger.debug("Annotations saved successfully")

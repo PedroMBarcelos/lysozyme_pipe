@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Output directories (generated results)
+output/
+results/
+batch_results/
+
+# External tools (downloaded by pipeline)
+BLAST/
+BEDTOOLS/
+FASTA36/
+
+# Large data files
+*.fasta
+*.fa
+*.fna
+*.fastq
+*.fq
+*.gz
+*.bz2
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
