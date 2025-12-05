@@ -14,7 +14,9 @@ from src.config import (
     DisablementCounts,
     GAP_CHAR,
     STOP_CODON_CHAR,
-    START_CODON_AA
+    START_CODON_AA,
+    MIN_LENGTH_RATIO,
+    MAX_LENGTH_RATIO
 )
 from src.blast_filter import BlastHit
 from src.score_density import RegionAnnotation, ProteinHitGroup
@@ -257,6 +259,54 @@ def count_premature_stop_codons(subject_seq: str) -> int:
     return count
 
 
+def check_length_viability(
+    candidate_length: int,
+    reference_length: int
+) -> Dict[str, any]:
+    """
+    Apply the 20% Rule to validate gene functionality based on size.
+    
+    Validates whether candidate gene length is within acceptable range
+    (80-120%) of reference protein length. Genes outside this range are
+    likely truncated, elongated, or fusion artifacts.
+    
+    Args:
+        candidate_length: Length of candidate sequence in amino acids
+        reference_length: Length of reference protein in amino acids
+    
+    Returns:
+        Dict with validation results:
+            - candidate_len: Candidate length
+            - ref_len: Reference length
+            - ratio: Length ratio (candidate/reference)
+            - status: "PASS" or "FAIL"
+            - classification: Classification result
+    """
+    # Calculate thresholds (20% Rule)
+    min_len = reference_length * MIN_LENGTH_RATIO
+    max_len = reference_length * MAX_LENGTH_RATIO
+    
+    ratio = candidate_length / reference_length if reference_length > 0 else 0
+    
+    result = {
+        "candidate_len": candidate_length,
+        "ref_len": reference_length,
+        "ratio": round(ratio, 2)
+    }
+    
+    if min_len <= candidate_length <= max_len:
+        result["status"] = "PASS"
+        result["classification"] = "Size compatible"
+    elif candidate_length < min_len:
+        result["status"] = "FAIL"
+        result["classification"] = "Truncated (size < 80%)"
+    else:
+        result["status"] = "FAIL"
+        result["classification"] = "Elongated/Fusion (size > 120%)"
+    
+    return result
+
+
 def check_start_stop_codons_genomic(
     genome_fasta_path: Path,
     chromosome: str,
@@ -444,6 +494,7 @@ def classify_as_pseudogene(
     - Frameshifts são forte evidência de pseudogene
     - Ausência de start codon (verificada genomicamente) é forte evidência
     - Ausência de stop codon (verificada genomicamente) é forte evidência
+    - Tamanho <80% ou >120% da proteína de referência é forte evidência (Regra dos 20%)
     - Substituições e indels sozinhos NÃO indicam pseudogene (podem ser variação normal)
     
     Args:
@@ -458,7 +509,8 @@ def classify_as_pseudogene(
         disablements.premature_stop_codons +
         disablements.frameshifts +
         disablements.missing_start_codon +
-        disablements.missing_stop_codon
+        disablements.missing_stop_codon +
+        disablements.size_mismatch
     )
     
     # Classifica como pseudogene apenas se houver evidência forte
@@ -551,6 +603,45 @@ def annotate_pseudogenes(
             disablements.missing_start_codon = 0
             disablements.missing_stop_codon = 0
         
+        # --- SIZE-BASED PSEUDOGENE DETECTION (20% RULE) ---
+        # TEMPORARILY DISABLED - Under investigation
+        # TODO: Review biological assumptions and implementation
+        """
+        # Apply only if both start and stop codons are present (per specification)
+        has_both_codons = (disablements.missing_start_codon == 0 and 
+                          disablements.missing_stop_codon == 0)
+        
+        if has_both_codons:
+            # Calculate candidate length from query coverage (handles overlapping HSPs)
+            hsps = region_ann.best_protein.hsps
+            min_qstart = min(hsp.qstart for hsp in hsps)
+            max_qend = max(hsp.qend for hsp in hsps)
+            candidate_length_aa = max_qend - min_qstart + 1
+            
+            # Reference protein length (all HSPs share same qlen)
+            reference_length_aa = hsps[0].qlen
+            length_check = check_length_viability(candidate_length_aa, reference_length_aa)
+            
+            if length_check["status"] == "FAIL":
+                disablements.size_mismatch = 1
+                logger.debug(
+                    f"Size mismatch: candidate={length_check['candidate_len']}aa, "
+                    f"reference={length_check['ref_len']}aa, "
+                    f"ratio={length_check['ratio']:.2f} - {length_check['classification']}"
+                )
+            else:
+                disablements.size_mismatch = 0
+                logger.debug(
+                    f"Size check passed: candidate={length_check['candidate_len']}aa, "
+                    f"reference={length_check['ref_len']}aa, ratio={length_check['ratio']:.2f}"
+                )
+        else:
+            # Skip size check if start/stop codons are missing
+            disablements.size_mismatch = 0
+        """
+        # Force size_mismatch to 0 while disabled
+        disablements.size_mismatch = 0
+        
         # Classify as pseudogene
         is_pseudogene = classify_as_pseudogene(disablements, min_disablements)
         
@@ -592,6 +683,71 @@ def save_pseudogene_annotations(
     logger.debug("Pseudogene annotations saved successfully")
 
 
+def save_coverage_statistics(
+    annotations: List[PseudogeneAnnotation],
+    output_path
+) -> None:
+    """
+    Save detailed coverage statistics for further analysis.
+    
+    Creates TSV with coverage ratio, alignment details, and classification
+    for discussion about size-based validation approaches.
+    
+    Args:
+        annotations: List of pseudogene annotations
+        output_path: Path to coverage statistics output file
+    """
+    import pandas as pd
+    
+    logger.debug(f"Saving coverage statistics to: {output_path}")
+    
+    coverage_data = []
+    for ann in annotations:
+        hsps = ann.region_annotation.best_protein.hsps
+        if hsps:
+            min_qstart = min(hsp.qstart for hsp in hsps)
+            max_qend = max(hsp.qend for hsp in hsps)
+            coverage_len = max_qend - min_qstart + 1
+            ref_len = hsps[0].qlen
+            coverage_ratio = coverage_len / ref_len if ref_len > 0 else 0
+            
+            # Calculate genomic length
+            genomic_len_nt = ann.region_annotation.region.length
+            genomic_len_aa = genomic_len_nt / 3
+            
+            coverage_data.append({
+                'chromosome': ann.region_annotation.region.chromosome,
+                'start': ann.region_annotation.region.start,
+                'end': ann.region_annotation.region.end,
+                'strand': ann.region_annotation.region.strand,
+                'protein_id': ann.region_annotation.best_protein.protein_id,
+                'is_pseudogene': ann.is_pseudogene,
+                'classification': 'Pseudogene' if ann.is_pseudogene else 'Functional',
+                'alignment_coverage_aa': coverage_len,
+                'reference_length_aa': ref_len,
+                'coverage_ratio': round(coverage_ratio, 3),
+                'genomic_region_nt': genomic_len_nt,
+                'genomic_region_aa': round(genomic_len_aa, 1),
+                'num_hsps': len(hsps),
+                'qstart_min': min_qstart,
+                'qend_max': max_qend,
+                'missing_start_codon': ann.disablements.missing_start_codon,
+                'missing_stop_codon': ann.disablements.missing_stop_codon,
+                'premature_stops': ann.disablements.premature_stop_codons,
+                'frameshifts': ann.disablements.frameshifts
+            })
+    
+    df = pd.DataFrame(coverage_data)
+    
+    # Sort by coverage ratio (ascending) to highlight problematic cases
+    df = df.sort_values('coverage_ratio', ascending=True)
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, sep='\t', index=False)
+    
+    logger.debug(f"Coverage statistics saved: {len(coverage_data)} regions")
+
+
 def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
     """
     Gera um relatório resumido das anotações de pseudogenes.
@@ -614,10 +770,48 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
     total_missing_stop = sum(ann.disablements.missing_stop_codon for ann in annotations)
     total_premature_stops = sum(ann.disablements.premature_stop_codons for ann in annotations)
     
+    # NOVA SEÇÃO: Análise de cobertura e tamanho
+    coverage_stats = []
+    for ann in annotations:
+        hsps = ann.region_annotation.best_protein.hsps
+        if hsps:
+            min_qstart = min(hsp.qstart for hsp in hsps)
+            max_qend = max(hsp.qend for hsp in hsps)
+            coverage_len = max_qend - min_qstart + 1
+            ref_len = hsps[0].qlen
+            coverage_ratio = coverage_len / ref_len if ref_len > 0 else 0
+            
+            coverage_stats.append({
+                'coverage_len': coverage_len,
+                'ref_len': ref_len,
+                'ratio': coverage_ratio,
+                'is_functional': not ann.is_pseudogene
+            })
+    
+    # Estatísticas de cobertura para genes funcionais
+    functional_coverage = [s for s in coverage_stats if s['is_functional']]
+    pseudogene_coverage = [s for s in coverage_stats if not s['is_functional']]
+    
+    # Calcular distribuição de ratios
+    if functional_coverage:
+        func_ratios = [s['ratio'] for s in functional_coverage]
+        func_avg_ratio = sum(func_ratios) / len(func_ratios)
+        func_min_ratio = min(func_ratios)
+        func_max_ratio = max(func_ratios)
+        func_below_80 = sum(1 for r in func_ratios if r < 0.8)
+    else:
+        func_avg_ratio = func_min_ratio = func_max_ratio = func_below_80 = 0
+    
+    if pseudogene_coverage:
+        pseudo_ratios = [s['ratio'] for s in pseudogene_coverage]
+        pseudo_avg_ratio = sum(pseudo_ratios) / len(pseudo_ratios)
+    else:
+        pseudo_avg_ratio = 0
+    
     report = f"""
-╔══════════════════════════════════════════════════════════════════╗
-║          RELATÓRIO DE ANOTAÇÃO DE PSEUDOGENES DE LISOZIMAS       ║
-╚══════════════════════════════════════════════════════════════════╝
+╭──────────────────────────────────────────────────────────────────╮
+│          RELATÓRIO DE ANOTAÇÃO DE PSEUDOGENES DE LISOZIMAS       │
+╰──────────────────────────────────────────────────────────────────╯
 
 RESUMO GERAL:
   Total de regiões analisadas:     {total_regions}
@@ -633,6 +827,24 @@ ESTATÍSTICAS DE MUTAÇÕES:
   Stop codons prematuros:          {total_premature_stops}
   
   Total de mutações inativadoras:  {total_substitutions + total_indels + total_frameshifts + total_missing_start + total_missing_stop + total_premature_stops}
+
+ANÁLISE DE COBERTURA DA PROTEÍNA DE REFERÊNCIA:
+  (Razão = Cobertura do Alinhamento / Tamanho da Referência)
+  
+  Genes Funcionais ({len(functional_coverage)} regiões):
+    Razão média de cobertura:      {func_avg_ratio:.2f}
+    Razão mínima:                   {func_min_ratio:.2f}
+    Razão máxima:                   {func_max_ratio:.2f}
+    Regiões com cobertura <80%:     {func_below_80} ({100*func_below_80/len(functional_coverage) if functional_coverage else 0:.1f}%)
+  
+  Pseudogenes ({len(pseudogene_coverage)} regiões):
+    Razão média de cobertura:      {pseudo_avg_ratio:.2f}
+
+  ⚠️  NOTA: Cobertura <80% pode indicar:
+     - Alinhamentos parciais (domínio conservado vs proteína completa)
+     - Proteínas de referência multi-domínio
+     - Genes truncados reais
+     ➜ Requer análise caso-a-caso para determinar funcionalidade
 
 """
     

@@ -38,9 +38,10 @@ class ProteinHitGroup:
             ProteinHitGroup object with calculated density
         """
         total_score = sum(hsp.score for hsp in hsps)
-        total_length = sum(hsp.length for hsp in hsps)
+        # Use query sequence length (protein positions) not alignment length
+        total_length = sum(abs(hsp.qend - hsp.qstart) + 1 for hsp in hsps)
         
-        # Calculate density: score / length
+        # Calculate density: score / query_length
         score_density = total_score / total_length if total_length > 0 else 0.0
         
         return cls(
@@ -81,7 +82,10 @@ def calculate_score_density(hsps: List[BlastHit]) -> float:
     """
     Calculate score density for a set of HSPs.
     
-    Density = Σ(Score_HSPs) / Σ(Length_sequences)
+    Density = Σ(Score_HSPs) / Σ(Query_sequence_length)
+    
+    Uses query sequence length (protein positions) not alignment length,
+    as per original specification for normalized scoring.
     
     Args:
         hsps: List of HSPs (High Scoring Pairs)
@@ -93,7 +97,8 @@ def calculate_score_density(hsps: List[BlastHit]) -> float:
         return 0.0
     
     total_score = sum(hsp.score for hsp in hsps)
-    total_length = sum(hsp.length for hsp in hsps)
+    # Use query sequence length (protein positions) not alignment length
+    total_length = sum(abs(hsp.qend - hsp.qstart) + 1 for hsp in hsps)
     
     density = total_score / total_length if total_length > 0 else 0.0
     

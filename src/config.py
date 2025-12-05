@@ -172,6 +172,10 @@ STOP_CODON_CHAR: str = "*"
 # Aminoácido inicial esperado (Metionina)
 START_CODON_AA: str = "M"
 
+# Limites de tamanho para a Regra dos 20%
+MIN_LENGTH_RATIO: float = 0.8  # 80% do tamanho da referência
+MAX_LENGTH_RATIO: float = 1.2  # 120% do tamanho da referência
+
 
 # ==================== ESTRUTURAS DE DADOS ====================
 
@@ -185,6 +189,7 @@ class DisablementCounts:
     missing_start_codon: int = 0           # Perda do start codon
     missing_stop_codon: int = 0            # Perda do stop codon
     premature_stop_codons: int = 0         # Stop codons prematuros
+    size_mismatch: int = 0                 # Tamanho incompatível (Regra dos 20%)
     
     @property
     def total_disablements(self) -> int:
@@ -195,7 +200,8 @@ class DisablementCounts:
             self.frameshifts +
             self.missing_start_codon +
             self.missing_stop_codon +
-            self.premature_stop_codons
+            self.premature_stop_codons +
+            self.size_mismatch
         )
     
     def to_dict(self) -> Dict[str, int]:
@@ -207,6 +213,7 @@ class DisablementCounts:
             "missing_start_codon": self.missing_start_codon,
             "missing_stop_codon": self.missing_stop_codon,
             "premature_stop_codons": self.premature_stop_codons,
+            "size_mismatch": self.size_mismatch,
             "total_disablements": self.total_disablements
         }
 
