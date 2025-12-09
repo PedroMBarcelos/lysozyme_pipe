@@ -188,13 +188,30 @@ class BatchProcessor:
             logger.debug(f"  SSEARCH realignments (E-value ≤ {evalue_threshold:.0e}): {len(filtered_ssearch)}")
             
             # Update hits based on SSEARCH
+            # AND update their scores with SSEARCH scores
             ssearch_hit_keys = set(filtered_ssearch.keys())
             filtered_hits_after_ssearch = []
+            
             for hit in filtered_hits:
                 hit_key = f"{hit.qseqid}_{hit.sseqid}_{hit.sstart}_{hit.send}"
                 if hit_key in ssearch_hit_keys:
+                    # Update BlastHit with SSEARCH scores
+                    ssearch_aln = filtered_ssearch[hit_key]
+                    
+                    # Update scores (critical for score density calculation)
+                    hit.score = int(ssearch_aln.bit_score)  # Use SSEARCH bit score as raw score
+                    hit.bitscore = ssearch_aln.bit_score
+                    hit.evalue = ssearch_aln.evalue
+                    
+                    # Update alignment details
+                    hit.length = ssearch_aln.alignment_length
+                    hit.pident = ssearch_aln.identity
+                    hit.mismatch = ssearch_aln.mismatches
+                    hit.gapopen = ssearch_aln.gap_opens
+                    
                     filtered_hits_after_ssearch.append(hit)
             
+            logger.debug(f"  Updated {len(filtered_hits_after_ssearch)} hits with SSEARCH scores")
             filtered_hits = filtered_hits_after_ssearch
             
             if not filtered_hits:

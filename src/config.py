@@ -18,6 +18,9 @@ MIN_BLOSUM62_SCORE: int = 120
 # E-value máximo para busca BLAST
 MAX_EVALUE: float = 1.0
 
+# E-value threshold for SSEARCH filtering (Filter 2)
+SSEARCH_EVALUE_THRESHOLD: float = 1e-6  # 10e-7 from specification
+
 
 # ==================== PARÂMETROS DO BLAST ====================
 
@@ -33,7 +36,7 @@ class BlastParameters:
     seg: str = "yes"
     soft_masking: bool = True
     lcase_masking: bool = True
-    evalue: float = MAX_EVALUE
+    evalue: float = 1.0  # E-value threshold as per specification
     max_target_seqs: int = 1000000
     threshold: int = 13
     num_threads: int = 1  # Será configurado pelo módulo de dependências
@@ -112,7 +115,7 @@ class SSearchParameters:
     best_alignments: int = 1    # -d: número de melhores alinhamentos
     shuffle_count: int = 500    # -k: número de permutações estatísticas
     gap_open_penalty: int = -11 # -f: penalidade de abertura de gap
-    gap_extend_penalty: int = -1  # -g: penalidade de extensão de gap
+    gap_extend_penalty: int = 1   # -g: penalidade de extensão de gap (positive value)
     output_format: str = "8C"   # -m: formato de saída (8C = tabular tipo BLAST com comentários)
     quiet_mode: bool = True     # -q: modo silencioso
     scoring_matrix: str = "BL62"  # -s: matriz de scoring
@@ -175,6 +178,9 @@ START_CODON_AA: str = "M"
 # Limites de tamanho para a Regra dos 20%
 MIN_LENGTH_RATIO: float = 0.8  # 80% do tamanho da referência
 MAX_LENGTH_RATIO: float = 1.2  # 120% do tamanho da referência
+
+# Minimum region size for full gene classification (nucleotides)
+MIN_REGION_SIZE_NT: int = 150  # Regions below this are classified as 'short-domain' (50 aa)
 
 
 # ==================== ESTRUTURAS DE DADOS ====================

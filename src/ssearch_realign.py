@@ -16,7 +16,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from src.config import SSearchParameters, DEFAULT_SSEARCH_PARAMS
+from src.config import SSearchParameters, DEFAULT_SSEARCH_PARAMS, SSEARCH_EVALUE_THRESHOLD
 from src.blast_filter import BlastHit
 
 
@@ -342,10 +342,14 @@ def realign_filtered_hits(
         )
         
         if alignment:
-            hit_key = f"{hit.qseqid}_{hit.sseqid}_{hit.sstart}_{hit.send}"
-            realignments[hit_key] = alignment
+            # Filter 2: Apply E-value threshold (1e-6)
+            if alignment.evalue <= SSEARCH_EVALUE_THRESHOLD:
+                hit_key = f"{hit.qseqid}_{hit.sseqid}_{hit.sstart}_{hit.send}"
+                realignments[hit_key] = alignment
+            else:
+                logger.debug(f"SSEARCH alignment filtered by E-value: {alignment.evalue:.2e} > {SSEARCH_EVALUE_THRESHOLD:.2e}")
     
-    logger.debug(f"Realignment complete. Total: {len(realignments)} alignments")
+    logger.debug(f"Realignment complete. Total: {len(realignments)} alignments (after E-value filter)")
     return realignments
 
 
@@ -398,7 +402,11 @@ def realign_filtered_hits_parallel(
     # Process results
     for hit_key, alignment in results:
         if alignment:
-            realignments[hit_key] = alignment
+            # Filter 2: Apply E-value threshold (1e-6)
+            if alignment.evalue <= SSEARCH_EVALUE_THRESHOLD:
+                realignments[hit_key] = alignment
+            else:
+                logger.debug(f"SSEARCH alignment filtered by E-value: {alignment.evalue:.2e} > {SSEARCH_EVALUE_THRESHOLD:.2e}")
     
-    logger.debug(f"Parallel realignment complete. Total: {len(realignments)} alignments")
+    logger.debug(f"Parallel realignment complete. Total: {len(realignments)} alignments (after E-value filter)")
     return realignments

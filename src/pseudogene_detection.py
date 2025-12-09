@@ -16,7 +16,8 @@ from src.config import (
     STOP_CODON_CHAR,
     START_CODON_AA,
     MIN_LENGTH_RATIO,
-    MAX_LENGTH_RATIO
+    MAX_LENGTH_RATIO,
+    MIN_REGION_SIZE_NT
 )
 from src.blast_filter import BlastHit
 from src.score_density import RegionAnnotation, ProteinHitGroup
@@ -50,12 +51,14 @@ class PseudogeneAnnotation:
     region_annotation: RegionAnnotation  # Anotação da região
     disablements: DisablementCounts      # Contadores de mutações
     is_pseudogene: bool                  # Se é classificado como pseudogene
+    is_short_domain: bool = False        # If region is too short (<150 nt, likely conserved domain fragment)
     
     def to_dict(self):
         """Converte a anotação em dicionário."""
         result = self.region_annotation.to_dict()
         result.update(self.disablements.to_dict())
         result['is_pseudogene'] = self.is_pseudogene
+        result['is_short_domain'] = self.is_short_domain
         return result
 
 
@@ -642,13 +645,22 @@ def annotate_pseudogenes(
         # Force size_mismatch to 0 while disabled
         disablements.size_mismatch = 0
         
-        # Classify as pseudogene
-        is_pseudogene = classify_as_pseudogene(disablements, min_disablements)
+        # Check if region is too short (likely conserved domain fragment)
+        # Short domains are a separate category and should not be classified as pseudogene/functional
+        is_short_domain = region_ann.region.length < MIN_REGION_SIZE_NT
+        
+        if is_short_domain:
+            # Short domains bypass classification - not pseudogene, not functional
+            is_pseudogene = False
+        else:
+            # Classify as pseudogene only for normal-sized regions
+            is_pseudogene = classify_as_pseudogene(disablements, min_disablements)
         
         pseudogene_ann = PseudogeneAnnotation(
             region_annotation=region_ann,
             disablements=disablements,
-            is_pseudogene=is_pseudogene
+            is_pseudogene=is_pseudogene,
+            is_short_domain=is_short_domain
         )
         
         pseudogene_annotations.append(pseudogene_ann)
@@ -715,6 +727,14 @@ def save_coverage_statistics(
             genomic_len_nt = ann.region_annotation.region.length
             genomic_len_aa = genomic_len_nt / 3
             
+            # Determine classification (mutually exclusive categories)
+            if ann.is_short_domain:
+                classification = 'Short-domain'
+            elif ann.is_pseudogene:
+                classification = 'Pseudogene'
+            else:
+                classification = 'Functional'
+            
             coverage_data.append({
                 'chromosome': ann.region_annotation.region.chromosome,
                 'start': ann.region_annotation.region.start,
@@ -722,7 +742,8 @@ def save_coverage_statistics(
                 'strand': ann.region_annotation.region.strand,
                 'protein_id': ann.region_annotation.best_protein.protein_id,
                 'is_pseudogene': ann.is_pseudogene,
-                'classification': 'Pseudogene' if ann.is_pseudogene else 'Functional',
+                'is_short_domain': ann.is_short_domain,
+                'classification': classification,
                 'alignment_coverage_aa': coverage_len,
                 'reference_length_aa': ref_len,
                 'coverage_ratio': round(coverage_ratio, 3),
@@ -759,8 +780,12 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
         String com o relatório formatado
     """
     total_regions = len(annotations)
-    num_pseudogenes = sum(1 for ann in annotations if ann.is_pseudogene)
-    num_functional = total_regions - num_pseudogenes
+    num_short_domains = sum(1 for ann in annotations if ann.is_short_domain)
+    
+    # Exclude short domains from classification counts
+    classifiable_regions = [ann for ann in annotations if not ann.is_short_domain]
+    num_pseudogenes = sum(1 for ann in classifiable_regions if ann.is_pseudogene)
+    num_functional = len(classifiable_regions) - num_pseudogenes
     
     # Estatísticas de mutações
     total_substitutions = sum(ann.disablements.non_synonymous_substitutions for ann in annotations)
@@ -771,8 +796,13 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
     total_premature_stops = sum(ann.disablements.premature_stop_codons for ann in annotations)
     
     # NOVA SEÇÃO: Análise de cobertura e tamanho
+    # Exclude short domains from coverage analysis
     coverage_stats = []
     for ann in annotations:
+        # Skip short domains - they are analyzed separately
+        if ann.is_short_domain:
+            continue
+            
         hsps = ann.region_annotation.best_protein.hsps
         if hsps:
             min_qstart = min(hsp.qstart for hsp in hsps)
@@ -785,12 +815,12 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
                 'coverage_len': coverage_len,
                 'ref_len': ref_len,
                 'ratio': coverage_ratio,
-                'is_functional': not ann.is_pseudogene
+                'is_pseudogene': ann.is_pseudogene
             })
     
-    # Estatísticas de cobertura para genes funcionais
-    functional_coverage = [s for s in coverage_stats if s['is_functional']]
-    pseudogene_coverage = [s for s in coverage_stats if not s['is_functional']]
+    # Estatísticas de cobertura para genes funcionais e pseudogenes (excluindo domínios curtos)
+    functional_coverage = [s for s in coverage_stats if not s['is_pseudogene']]
+    pseudogene_coverage = [s for s in coverage_stats if s['is_pseudogene']]
     
     # Calcular distribuição de ratios
     if functional_coverage:
@@ -805,46 +835,50 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
     if pseudogene_coverage:
         pseudo_ratios = [s['ratio'] for s in pseudogene_coverage]
         pseudo_avg_ratio = sum(pseudo_ratios) / len(pseudo_ratios)
+        pseudo_min_ratio = min(pseudo_ratios)
+        pseudo_max_ratio = max(pseudo_ratios)
+        pseudo_below_80 = sum(1 for r in pseudo_ratios if r < 0.8)
     else:
-        pseudo_avg_ratio = 0
+        pseudo_avg_ratio = pseudo_min_ratio = pseudo_max_ratio = pseudo_below_80 = 0
     
     report = f"""
 ╭──────────────────────────────────────────────────────────────────╮
-│          RELATÓRIO DE ANOTAÇÃO DE PSEUDOGENES DE LISOZIMAS       │
+│          LYSOZYME PSEUDOGENE ANNOTATION REPORT                   │
 ╰──────────────────────────────────────────────────────────────────╯
 
-RESUMO GERAL:
-  Total de regiões analisadas:     {total_regions}
-  Pseudogenes detectados:          {num_pseudogenes} ({100*num_pseudogenes/total_regions if total_regions > 0 else 0:.1f}%)
-  Genes funcionais:                {num_functional} ({100*num_functional/total_regions if total_regions > 0 else 0:.1f}%)
+GENERAL SUMMARY:
+  Total regions analyzed:          {total_regions}
+  
+  Classification (mutually exclusive):
+    Functional genes:                {num_functional} ({100*num_functional/total_regions if total_regions > 0 else 0:.1f}%)
+    Detected pseudogenes:            {num_pseudogenes} ({100*num_pseudogenes/total_regions if total_regions > 0 else 0:.1f}%)
+    Short domains (<150 nt):         {num_short_domains} ({100*num_short_domains/total_regions if total_regions > 0 else 0:.1f}%)
 
-ESTATÍSTICAS DE MUTAÇÕES:
-  Substituições não-sinônimas:     {total_substitutions}
-  Indels in-frame:                 {total_indels}
+MUTATION STATISTICS:
+  Non-synonymous substitutions:    {total_substitutions}
+  In-frame indels:                 {total_indels}
   Frameshifts:                     {total_frameshifts}
-  Ausência de start codon:         {total_missing_start}
-  Ausência de stop codon:          {total_missing_stop}
-  Stop codons prematuros:          {total_premature_stops}
+  Missing start codon:             {total_missing_start}
+  Missing stop codon:              {total_missing_stop}
+  Premature stop codons:           {total_premature_stops}
   
-  Total de mutações inativadoras:  {total_substitutions + total_indels + total_frameshifts + total_missing_start + total_missing_stop + total_premature_stops}
+  Total inactivating mutations:    {total_substitutions + total_indels + total_frameshifts + total_missing_start + total_missing_stop + total_premature_stops}
 
-ANÁLISE DE COBERTURA DA PROTEÍNA DE REFERÊNCIA:
-  (Razão = Cobertura do Alinhamento / Tamanho da Referência)
+REFERENCE PROTEIN COVERAGE ANALYSIS:
+  (Ratio = Alignment Coverage / Reference Size)
   
-  Genes Funcionais ({len(functional_coverage)} regiões):
-    Razão média de cobertura:      {func_avg_ratio:.2f}
-    Razão mínima:                   {func_min_ratio:.2f}
-    Razão máxima:                   {func_max_ratio:.2f}
-    Regiões com cobertura <80%:     {func_below_80} ({100*func_below_80/len(functional_coverage) if functional_coverage else 0:.1f}%)
+  Functional Genes ({len(functional_coverage)} regions):
+    Mean coverage ratio:             {func_avg_ratio:.2f}
+    Minimum ratio:                   {func_min_ratio:.2f}
+    Maximum ratio:                   {func_max_ratio:.2f}
+    Regions with coverage <80%:      {func_below_80} ({100*func_below_80/len(functional_coverage) if functional_coverage else 0:.1f}%)
   
-  Pseudogenes ({len(pseudogene_coverage)} regiões):
-    Razão média de cobertura:      {pseudo_avg_ratio:.2f}
+  Pseudogenes ({len(pseudogene_coverage)} regions):
+    Mean coverage ratio:             {pseudo_avg_ratio:.2f}
+    Minimum ratio:                   {pseudo_min_ratio:.2f}
+    Maximum ratio:                   {pseudo_max_ratio:.2f}
+    Regions with coverage <80%:      {pseudo_below_80} ({100*pseudo_below_80/len(pseudogene_coverage) if pseudogene_coverage else 0:.1f}%)
 
-  ⚠️  NOTA: Cobertura <80% pode indicar:
-     - Alinhamentos parciais (domínio conservado vs proteína completa)
-     - Proteínas de referência multi-domínio
-     - Genes truncados reais
-     ➜ Requer análise caso-a-caso para determinar funcionalidade
 
 """
     

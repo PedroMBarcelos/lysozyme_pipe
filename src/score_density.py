@@ -30,6 +30,14 @@ class ProteinHitGroup:
         """
         Create a ProteinHitGroup from a list of HSPs.
         
+        Follows expert specification:
+        Score Density = Σ(Scores of HSPs) / Σ(Alignment Lengths of HSPs)
+        
+        Where:
+        - Numerator: Sum of raw scores from each HSP
+        - Denominator: Sum of actual alignment lengths (hsp.length)
+          NOT query coverage (qend-qstart) which would include gaps between HSPs
+        
         Args:
             protein_id: Protein ID
             hsps: List of HSPs for this protein
@@ -38,10 +46,11 @@ class ProteinHitGroup:
             ProteinHitGroup object with calculated density
         """
         total_score = sum(hsp.score for hsp in hsps)
-        # Use query sequence length (protein positions) not alignment length
-        total_length = sum(abs(hsp.qend - hsp.qstart) + 1 for hsp in hsps)
+        # Use actual alignment length (number of aligned residues)
+        # NOT query coverage which includes gaps between HSPs
+        total_length = sum(hsp.length for hsp in hsps)
         
-        # Calculate density: score / query_length
+        # Calculate density: score / alignment_length
         score_density = total_score / total_length if total_length > 0 else 0.0
         
         return cls(
@@ -82,29 +91,40 @@ def calculate_score_density(hsps: List[BlastHit]) -> float:
     """
     Calculate score density for a set of HSPs.
     
-    Density = Σ(Score_HSPs) / Σ(Query_sequence_length)
+    Follows expert specification:
+    Density = Σ(Score_HSPs) / Σ(Alignment_Length_HSPs)
     
-    Uses query sequence length (protein positions) not alignment length,
-    as per original specification for normalized scoring.
+    Where:
+    - Score: Raw BLAST/SSEARCH score for each HSP
+    - Alignment Length: Actual number of aligned residues (hsp.length)
+      NOT query coverage which would include unaligned gaps
+    
+    This measures alignment quality per aligned residue, answering:
+    "In the regions where alignment occurred, how strong was that alignment?"
+    
+    Example:
+      HSP1: score=150, length=50 aa
+      HSP2: score=120, length=40 aa
+      Density = (150+120)/(50+40) = 270/90 = 3.0
     
     Args:
         hsps: List of HSPs (High Scoring Pairs)
     
     Returns:
-        Score density
+        Score density (score per aligned amino acid)
     """
     if not hsps:
         return 0.0
     
     total_score = sum(hsp.score for hsp in hsps)
-    # Use query sequence length (protein positions) not alignment length
-    total_length = sum(abs(hsp.qend - hsp.qstart) + 1 for hsp in hsps)
+    # Use actual alignment length (number of aligned residues)
+    total_length = sum(hsp.length for hsp in hsps)
     
     density = total_score / total_length if total_length > 0 else 0.0
     
     logger.debug(
         f"Density calculated: {density:.2f} "
-        f"(score={total_score}, length={total_length}, num_hsps={len(hsps)})"
+        f"(score={total_score}, alignment_length={total_length}, num_hsps={len(hsps)})"
     )
     
     return density
@@ -156,15 +176,18 @@ def select_best_protein_for_region(
         hit_group = ProteinHitGroup.from_hsps(protein_id, hsps)
         protein_hit_groups.append(hit_group)
     
-    # Select protein with highest density
+    # Select protein with highest density ("King of the Hill" algorithm)
+    # Primary criterion: Highest Score Density
+    # Tie-breaker: Highest Total Score (if densities are equal)
     best_protein = max(
         protein_hit_groups,
-        key=lambda x: x.score_density
+        key=lambda x: (x.score_density, x.total_score)
     )
     
     logger.debug(
         f"Best protein for region {region.chromosome}:{region.start}-{region.end}: "
-        f"{best_protein.protein_id} (density={best_protein.score_density:.2f})"
+        f"{best_protein.protein_id} (density={best_protein.score_density:.2f}, "
+        f"total_score={best_protein.total_score})"
     )
     
     # Update query_ids list in region

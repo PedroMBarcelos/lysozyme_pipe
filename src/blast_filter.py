@@ -54,7 +54,7 @@ class BlastHit:
         """
         Check if hit passes quality criteria.
         
-        Discard rule: Remove alignments that have BOTH conditions:
+        Discard rule: Remove alignments that have ANY of these conditions:
         - %identity <= min_identity (default: 20%)
         - BLOSUM62 score < min_score (default: 120)
         
@@ -65,11 +65,11 @@ class BlastHit:
         Returns:
             True if hit passes filter (should be kept), False otherwise
         """
-        # Discard only if BOTH conditions are true
+        # Discard if ANY condition is true (OR logic)
         fails_identity = self.pident <= min_identity
         fails_score = self.score < min_score
         
-        if fails_identity and fails_score:
+        if fails_identity or fails_score:
             logger.debug(
                 f"Hit discarded - qseqid: {self.qseqid}, sseqid: {self.sseqid}, "
                 f"pident: {self.pident}%, score: {self.score}"
