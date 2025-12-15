@@ -15,7 +15,12 @@ from src.blast_filter import run_filtering_step, parse_blast_output
 from src.ssearch_realign import realign_filtered_hits_parallel
 from src.bedtools_merge import merge_blast_hits, save_merged_regions
 from src.score_density import annotate_regions_with_best_proteins, save_region_annotations
-from src.pseudogene_detection import annotate_pseudogenes, save_pseudogene_annotations
+from src.pseudogene_detection import (
+    annotate_pseudogenes, 
+    save_pseudogene_annotations,
+    save_coverage_statistics,
+    generate_summary_report
+)
 from src.export_gff3 import export_to_gff3
 from src.comparative_analysis import generate_comparative_report
 from src.config import (
@@ -42,6 +47,8 @@ class BatchProcessor:
         min_identity: float = MIN_IDENTITY_THRESHOLD,
         min_score: int = MIN_BLOSUM62_SCORE,
         min_disablements: int = 1,
+        min_coverage: float = 0.8,
+        final_min_identity: float = 0.0,
         num_threads: int = None
     ):
         """
@@ -55,6 +62,8 @@ class BatchProcessor:
             min_identity: Minimum identity for filtering
             min_score: Minimum score for filtering
             min_disablements: Minimum mutations for pseudogene
+            min_coverage: Minimum coverage ratio for reporting
+            final_min_identity: Final minimum identity filter
             num_threads: Number of threads for parallelism
         """
         self.input_dir = Path(input_dir)
@@ -64,6 +73,8 @@ class BatchProcessor:
         self.min_identity = min_identity
         self.min_score = min_score
         self.min_disablements = min_disablements
+        self.min_coverage = min_coverage
+        self.final_min_identity = final_min_identity
         self.num_threads = num_threads
         
         self.per_genome_dir = output_dir / "per_genome"
@@ -245,6 +256,41 @@ class BatchProcessor:
                 self.min_disablements
             )
             
+            # --- Coverage Filter ---
+            if self.min_coverage > 0:
+                logger.debug(f"[{genome_id}] Applying coverage filter: >= {self.min_coverage*100:.1f}%")
+                original_count = len(pseudogene_annotations)
+                
+                filtered_annotations = []
+                for ann in pseudogene_annotations:
+                    hsps = ann.region_annotation.best_protein.hsps
+                    if hsps:
+                        min_qstart = min(hsp.qstart for hsp in hsps)
+                        max_qend = max(hsp.qend for hsp in hsps)
+                        coverage_len = max_qend - min_qstart + 1
+                        ref_len = hsps[0].qlen
+                        coverage_ratio = coverage_len / ref_len if ref_len > 0 else 0
+                        
+                        if coverage_ratio >= self.min_coverage:
+                            filtered_annotations.append(ann)
+                
+                pseudogene_annotations = filtered_annotations
+                logger.debug(f"  Filtered {original_count - len(pseudogene_annotations)} regions. Remaining: {len(pseudogene_annotations)}")
+
+            # --- Final Identity Filter ---
+            if self.final_min_identity > 0:
+                # Convert fraction to percentage if necessary (e.g. 0.7 -> 70.0)
+                threshold_pct = self.final_min_identity * 100 if self.final_min_identity <= 1.0 else self.final_min_identity
+                
+                logger.debug(f"[{genome_id}] Applying final identity filter: >= {threshold_pct:.1f}%")
+                original_count = len(pseudogene_annotations)
+                
+                pseudogene_annotations = [
+                    ann for ann in pseudogene_annotations 
+                    if max(hsp.pident for hsp in ann.region_annotation.best_protein.hsps) >= threshold_pct
+                ]
+                logger.debug(f"  Filtered {original_count - len(pseudogene_annotations)} regions. Remaining: {len(pseudogene_annotations)}")
+            
             num_pseudogenes = sum(1 for a in pseudogene_annotations if a.is_pseudogene)
             functional = len(pseudogene_annotations) - num_pseudogenes
             logger.debug(f"  Pseudogenes: {num_pseudogenes}")
@@ -253,6 +299,16 @@ class BatchProcessor:
             # Save individual results
             pseudogenes_output = final_dir / "pseudogene_annotations.tsv"
             save_pseudogene_annotations(pseudogene_annotations, pseudogenes_output)
+            
+            # Save coverage statistics
+            coverage_stats_output = final_dir / "coverage_statistics.tsv"
+            save_coverage_statistics(pseudogene_annotations, coverage_stats_output)
+
+            # Generate and save summary report
+            summary_report = generate_summary_report(pseudogene_annotations, self.min_coverage)
+            summary_output = final_dir / "lysozyme_summary.txt"
+            with open(summary_output, 'w') as f:
+                f.write(summary_report)
             
             # Export GFF3
             gff3_output = final_dir / f"{genome_id}_annotations.gff3"
@@ -269,6 +325,7 @@ class BatchProcessor:
                 'best_protein_id': a.region_annotation.best_protein.protein_id,
                 'score_density': a.region_annotation.best_protein.score_density,
                 'is_pseudogene': a.is_pseudogene,
+                'is_small_orf': a.is_small_orf,
                 'non_synonymous_substitutions': a.disablements.non_synonymous_substitutions,
                 'in_frame_indels': a.disablements.in_frame_indels,
                 'frameshifts': a.disablements.frameshifts,

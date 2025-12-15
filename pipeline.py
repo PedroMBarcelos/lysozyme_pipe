@@ -30,6 +30,7 @@ from src.pseudogene_detection import (
     save_coverage_statistics,
     generate_summary_report
 )
+from src.export_gff3 import export_to_gff3
 
 
 def setup_logging(log_file: Path = None, verbose: bool = False) -> None:
@@ -143,6 +144,20 @@ Exemplos de uso:
         metavar='INT',
         help='Minimum number of mutations to classify as pseudogene (default: 1)'
     )
+    filtering.add_argument(
+        '--min-coverage',
+        type=float,
+        default=0.8,
+        metavar='FLOAT',
+        help='Minimum coverage ratio for reporting (default: 0.8)'
+    )
+    filtering.add_argument(
+        '--final-min-identity',
+        type=float,
+        default=0.0,
+        metavar='FLOAT',
+        help='Final minimum identity filter (default: 0.0 - disabled)'
+    )
     
     # Execution options
     execution = parser.add_argument_group('execution options')
@@ -194,6 +209,8 @@ def run_pipeline(
     min_identity: float = MIN_IDENTITY_THRESHOLD,
     min_score: int = MIN_BLOSUM62_SCORE,
     min_disablements: int = 1,
+    min_coverage: float = 0.8,
+    final_min_identity: float = 0.0,
     num_threads: int = None,
     deps: dict = None
 ) -> None:
@@ -208,6 +225,8 @@ def run_pipeline(
         min_identity: Minimum identity for filtering
         min_score: Minimum score for filtering
         min_disablements: Minimum mutations to classify as pseudogene
+        min_coverage: Minimum coverage ratio for reporting
+        final_min_identity: Final minimum identity filter
         num_threads: Number of threads for parallelization
         deps: Dependencies dictionary from verify_and_install_dependencies()
     """
@@ -349,15 +368,56 @@ def run_pipeline(
         min_disablements
     )
     
+    # --- Coverage Filter ---
+    if min_coverage > 0:
+        logger.info(f"Applying coverage filter: >= {min_coverage*100:.1f}%")
+        original_count = len(pseudogene_annotations)
+        
+        filtered_annotations = []
+        for ann in pseudogene_annotations:
+            hsps = ann.region_annotation.best_protein.hsps
+            if hsps:
+                min_qstart = min(hsp.qstart for hsp in hsps)
+                max_qend = max(hsp.qend for hsp in hsps)
+                coverage_len = max_qend - min_qstart + 1
+                ref_len = hsps[0].qlen
+                coverage_ratio = coverage_len / ref_len if ref_len > 0 else 0
+                
+                if coverage_ratio >= min_coverage:
+                    filtered_annotations.append(ann)
+        
+        pseudogene_annotations = filtered_annotations
+        logger.info(f"  Filtered {original_count - len(pseudogene_annotations)} regions. Remaining: {len(pseudogene_annotations)}")
+
+    # --- Final Identity Filter ---
+    if final_min_identity > 0:
+        # Convert fraction to percentage if necessary (e.g. 0.7 -> 70.0)
+        # If user provided > 1.0, assume it's already percentage
+        threshold_pct = final_min_identity * 100 if final_min_identity <= 1.0 else final_min_identity
+        
+        logger.info(f"Applying final identity filter: >= {threshold_pct:.1f}%")
+        original_count = len(pseudogene_annotations)
+        
+        pseudogene_annotations = [
+            ann for ann in pseudogene_annotations 
+            if max(hsp.pident for hsp in ann.region_annotation.best_protein.hsps) >= threshold_pct
+        ]
+        
+        logger.info(f"  Filtered {original_count - len(pseudogene_annotations)} regions. Remaining: {len(pseudogene_annotations)}")
+    
     pseudogenes_output = final_dir / "pseudogene_annotations.tsv"
     save_pseudogene_annotations(pseudogene_annotations, pseudogenes_output)
+    
+    # Export GFF3
+    gff3_output = final_dir / "lysozyme_annotations.gff3"
+    export_to_gff3(pseudogene_annotations, genome_id, gff3_output)
     
     # Save coverage statistics for detailed analysis
     coverage_output = final_dir / "coverage_statistics.tsv"
     save_coverage_statistics(pseudogene_annotations, coverage_output)
     
     # Generate summary report
-    summary = generate_summary_report(pseudogene_annotations)
+    summary = generate_summary_report(pseudogene_annotations, min_coverage)
     print(summary)
     
     report_file = final_dir / "summary_report.txt"
@@ -398,6 +458,8 @@ def main():
                 min_identity=args.min_identity,
                 min_score=args.min_score,
                 min_disablements=args.min_disablements,
+                min_coverage=args.min_coverage,
+                final_min_identity=args.final_min_identity,
                 num_threads=args.num_threads
             )
             
@@ -426,6 +488,8 @@ def main():
                 min_identity=args.min_identity,
                 min_score=args.min_score,
                 min_disablements=args.min_disablements,
+                min_coverage=args.min_coverage,
+                final_min_identity=args.final_min_identity,
                 num_threads=args.num_threads,
                 deps=deps  # Pass deps to avoid re-verification
             )

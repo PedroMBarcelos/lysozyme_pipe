@@ -179,8 +179,9 @@ START_CODON_AA: str = "M"
 MIN_LENGTH_RATIO: float = 0.8  # 80% do tamanho da referência
 MAX_LENGTH_RATIO: float = 1.2  # 120% do tamanho da referência
 
-# Minimum region size for full gene classification (nucleotides)
-MIN_REGION_SIZE_NT: int = 150  # Regions below this are classified as 'short-domain' (50 aa)
+# Minimum region size for Small ORF classification (nucleotides)
+MIN_REGION_SIZE_NT: int = 300  # Regions below this are classified as 'small ORF' (100 aa)
+MIN_ALIGNMENT_SIZE_AA: int = 100  # Alignment length threshold for Small ORF check
 
 
 # ==================== ESTRUTURAS DE DADOS ====================

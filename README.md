@@ -346,3 +346,13 @@ Ensure:
 - `pathogenicity` values are: `pathogenic`, `non-pathogenic`, or `unknown`
 - TSV file uses tab separators (not spaces)
 
+# Non pathogenic vars
+
+# Non-pathogenic
+   ncbi-genomes-2022-11-16/GCA_000005845.2_ASM584v2_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_900092615.1_PRJEB14041_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_017355065.1_ASM1735506v1_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_017355085.1_ASM1735508v1_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_017355105.1_ASM1735510v1_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_017355125.1_ASM1735512v1_genomic.fna.gz
+   ncbi-genomes-2022-11-16/GCA_017355145.1_ASM1735514v1_genomic.fna.gz

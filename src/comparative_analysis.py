@@ -63,6 +63,10 @@ def generate_summary_stats(aggregated_df: pd.DataFrame) -> pd.DataFrame:
             'total_regions': len(genome_data),
             'functional_genes': len(genome_data[genome_data['is_pseudogene'] == False]),
             'pseudogenes': len(genome_data[genome_data['is_pseudogene'] == True]),
+            'functional_possible': len(genome_data[(genome_data['is_pseudogene'] == False) & (genome_data['is_small_orf'] == False)]),
+            'functional_small': len(genome_data[(genome_data['is_pseudogene'] == False) & (genome_data['is_small_orf'] == True)]),
+            'pseudogene_detected': len(genome_data[(genome_data['is_pseudogene'] == True) & (genome_data['is_small_orf'] == False)]),
+            'pseudogene_small': len(genome_data[(genome_data['is_pseudogene'] == True) & (genome_data['is_small_orf'] == True)]),
             'pseudogene_rate': len(genome_data[genome_data['is_pseudogene'] == True]) / len(genome_data) * 100 if len(genome_data) > 0 else 0,
             'total_stop_codons': genome_data['premature_stop_codons'].sum(),
             'total_frameshifts': genome_data['frameshifts'].sum(),
@@ -170,7 +174,11 @@ def generate_comparative_report(
             f.write(f"\n{row['genome_id']}:\n")
             f.write(f"  Total regions: {row['total_regions']}\n")
             f.write(f"  Functional genes: {row['functional_genes']} ({100-row['pseudogene_rate']:.1f}%)\n")
+            f.write(f"    - Possible Genes: {row['functional_possible']}\n")
+            f.write(f"    - Small ORFs: {row['functional_small']}\n")
             f.write(f"  Pseudogenes: {row['pseudogenes']} ({row['pseudogene_rate']:.1f}%)\n")
+            f.write(f"    - Detected Pseudogenes: {row['pseudogene_detected']}\n")
+            f.write(f"    - Small ORFs: {row['pseudogene_small']}\n")
             f.write(f"  Premature stop codons: {row['total_stop_codons']}\n")
             f.write(f"  Frameshifts: {row['total_frameshifts']}\n")
             f.write(f"  Missing start codons: {row['total_missing_start']}\n")

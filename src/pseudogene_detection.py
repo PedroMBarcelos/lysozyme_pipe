@@ -17,7 +17,8 @@ from src.config import (
     START_CODON_AA,
     MIN_LENGTH_RATIO,
     MAX_LENGTH_RATIO,
-    MIN_REGION_SIZE_NT
+    MIN_REGION_SIZE_NT,
+    MIN_ALIGNMENT_SIZE_AA
 )
 from src.blast_filter import BlastHit
 from src.score_density import RegionAnnotation, ProteinHitGroup
@@ -51,14 +52,26 @@ class PseudogeneAnnotation:
     region_annotation: RegionAnnotation  # Anotação da região
     disablements: DisablementCounts      # Contadores de mutações
     is_pseudogene: bool                  # Se é classificado como pseudogene
-    is_short_domain: bool = False        # If region is too short (<150 nt, likely conserved domain fragment)
+    is_small_orf: bool = False           # If region is small (<300 nt / 100 aa)
     
     def to_dict(self):
         """Converte a anotação em dicionário."""
         result = self.region_annotation.to_dict()
         result.update(self.disablements.to_dict())
         result['is_pseudogene'] = self.is_pseudogene
-        result['is_short_domain'] = self.is_short_domain
+        result['is_small_orf'] = self.is_small_orf
+        
+        # Add concatenated sequences for visualization
+        hsps = self.region_annotation.best_protein.hsps
+        if hsps:
+            # Sort HSPs by query start to ensure correct order
+            sorted_hsps = sorted(hsps, key=lambda h: h.qstart)
+            result['qseq'] = "".join(h.qseq for h in sorted_hsps)
+            result['sseq'] = "".join(h.sseq for h in sorted_hsps)
+        else:
+            result['qseq'] = ""
+            result['sseq'] = ""
+            
         return result
 
 
@@ -316,18 +329,18 @@ def check_start_stop_codons_genomic(
     start: int,
     end: int,
     strand: str,
-    padding: int = 150,
+    reference_length_aa: int,
     check_start: bool = True,
     check_stop: bool = True
 ) -> Dict[str, bool]:
     """
     Check for start/stop codons by expanding aligned region in genome.
     
-    Expand & Check strategy with flexible frame verification:
-    1. Extract genomic region with padding
+    Expand & Check strategy with STRICT FRAME verification:
+    1. Extract genomic region with padding (max 20% of ref length)
     2. Orient sequence (reverse complement if negative strand)
-    3. Search for start codon upstream (if check_start=True)
-    4. Search for stop codon downstream (if check_stop=True)
+    3. Search for start codon upstream (if check_start=True) IN FRAME (steps of 3)
+    4. Search for stop codon downstream (if check_stop=True) IN FRAME (steps of 3)
     
     Args:
         genome_fasta_path: Path to genome FASTA file
@@ -335,7 +348,7 @@ def check_start_stop_codons_genomic(
         start: Alignment start (1-based)
         end: Alignment end (1-based)
         strand: '+' or '-'
-        padding: Extra nucleotides to search (default: 150bp = 50 codons)
+        reference_length_aa: Length of reference protein (for window calculation)
         check_start: Search for start codon (default: True)
         check_stop: Search for stop codon (default: True)
     
@@ -350,6 +363,12 @@ def check_start_stop_codons_genomic(
         return {"has_start": False, "has_stop": False, "start_codon": None, "stop_codon": None}
     
     genome_seq = genome_seqs[chromosome]
+    
+    # Calculate dynamic padding (max 20% of reference length)
+    # reference_length_aa * 3 = reference_length_nt
+    # 20% of reference_length_nt
+    max_padding_nt = int((reference_length_aa * 3) * 0.20)
+    padding = max_padding_nt
     
     # Convert to 0-based
     start_0 = start - 1
@@ -388,8 +407,10 @@ def check_start_stop_codons_genomic(
     if check_start:
         upstream_region = dna_str[0:rel_align_start]
         
-        # Iterate backwards searching for any start codon (no frame restriction)
-        for i in range(len(upstream_region) - 3, -1, -1):
+        # Iterate backwards searching for start codon IN FRAME (steps of 3)
+        # We start from the codon immediately preceding the alignment start
+        # i.e., rel_align_start - 3, rel_align_start - 6, etc.
+        for i in range(len(upstream_region) - 3, -1, -3):
             codon = upstream_region[i:i+3]
             if len(codon) < 3:
                 continue
@@ -400,7 +421,7 @@ def check_start_stop_codons_genomic(
                 break
             
             if codon in stop_codons:
-                # Stop before start = truncated gene
+                # Stop before start = truncated gene / pseudogene
                 break
     
     # --- STOP CODON SEARCH (DOWNSTREAM) ---
@@ -410,8 +431,10 @@ def check_start_stop_codons_genomic(
     if check_stop:
         downstream_region = dna_str[rel_align_end:]
         
-        # Iterate forward searching for any stop codon (no frame restriction)
-        for i in range(0, len(downstream_region) - 2):
+        # Iterate forward searching for stop codon IN FRAME (steps of 3)
+        # We start from the codon immediately following the alignment end
+        # i.e., 0, 3, 6... relative to downstream_region start
+        for i in range(0, len(downstream_region) - 2, 3):
             codon = downstream_region[i:i+3]
             if len(codon) < 3:
                 continue
@@ -420,6 +443,8 @@ def check_start_stop_codons_genomic(
                 has_stop = True
                 stop_codon = codon
                 break
+            
+            # Note: We don't break on start codons downstream, as they might be Methionines inside the tail
     
     return {
         "has_start": has_start,
@@ -586,7 +611,7 @@ def annotate_pseudogenes(
                 region_ann.region.start,
                 region_ann.region.end,
                 region_ann.region.strand,
-                padding=padding,
+                reference_length_aa=region_ann.best_protein.hsps[0].qlen,
                 check_start=not has_start_in_alignment,
                 check_stop=not has_stop_in_alignment
             )
@@ -602,7 +627,7 @@ def annotate_pseudogenes(
             else:
                 disablements.missing_stop_codon = 0  # Confirmed in alignment
         else:
-            # Both confirmed in alignment - no genomic search needed
+            # Both confirmed in alignment
             disablements.missing_start_codon = 0
             disablements.missing_stop_codon = 0
         
@@ -645,22 +670,24 @@ def annotate_pseudogenes(
         # Force size_mismatch to 0 while disabled
         disablements.size_mismatch = 0
         
-        # Check if region is too short (likely conserved domain fragment)
-        # Short domains are a separate category and should not be classified as pseudogene/functional
-        is_short_domain = region_ann.region.length < MIN_REGION_SIZE_NT
+        # Check if region is a Small ORF
+        # Condition: Genomic length < 300 nt AND Alignment length < 100 aa
+        # (If EITHER is large enough, it is NOT a small ORF)
+        genomic_len = region_ann.region.length
+        alignment_len = region_ann.best_protein.total_length
         
-        if is_short_domain:
-            # Short domains bypass classification - not pseudogene, not functional
-            is_pseudogene = False
-        else:
-            # Classify as pseudogene only for normal-sized regions
-            is_pseudogene = classify_as_pseudogene(disablements, min_disablements)
+        is_normal_size = (genomic_len >= MIN_REGION_SIZE_NT) or (alignment_len >= MIN_ALIGNMENT_SIZE_AA)
+        is_small_orf = not is_normal_size
+        
+        # Classify as pseudogene based on mutations and size ratio
+        # Small ORFs are classified normally (likely pseudogenes if truncated, functional if full-length small proteins)
+        is_pseudogene = classify_as_pseudogene(disablements, min_disablements)
         
         pseudogene_ann = PseudogeneAnnotation(
             region_annotation=region_ann,
             disablements=disablements,
             is_pseudogene=is_pseudogene,
-            is_short_domain=is_short_domain
+            is_small_orf=is_small_orf
         )
         
         pseudogene_annotations.append(pseudogene_ann)
@@ -695,6 +722,44 @@ def save_pseudogene_annotations(
     logger.debug("Pseudogene annotations saved successfully")
 
 
+def calculate_subject_coverage_nt(hsps: List[BlastHit]) -> int:
+    """
+    Calcula a cobertura no SUBJECT (Genoma) em nucleotídeos, excluindo gaps.
+    
+    Args:
+        hsps: Lista de HSPs
+        
+    Returns:
+        Total de nucleotídeos cobertos pelo alinhamento
+    """
+    if not hsps:
+        return 0
+    
+    # Coletar intervalos no genoma (Subject)
+    # Nota: tblastn pode ter sstart > send se for na fita reversa
+    intervals = []
+    for hsp in hsps:
+        start = min(hsp.sstart, hsp.send)
+        end = max(hsp.sstart, hsp.send)
+        intervals.append((start, end))
+    
+    # Ordenar por posição inicial
+    intervals.sort()
+    
+    # Fundir intervalos sobrepostos
+    merged = []
+    for start, end in intervals:
+        if not merged or start > merged[-1][1] + 1:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    
+    # Somar comprimentos
+    total = sum(end - start + 1 for start, end in merged)
+    
+    return total
+
+
 def save_coverage_statistics(
     annotations: List[PseudogeneAnnotation],
     output_path
@@ -727,13 +792,27 @@ def save_coverage_statistics(
             genomic_len_nt = ann.region_annotation.region.length
             genomic_len_aa = genomic_len_nt / 3
             
-            # Determine classification (mutually exclusive categories)
-            if ann.is_short_domain:
-                classification = 'Short-domain'
-            elif ann.is_pseudogene:
-                classification = 'Pseudogene'
+            # Calculate subject coverage (nt)
+            alignment_coverage_nt = calculate_subject_coverage_nt(hsps)
+            
+            # Calculate reference coverage in nt (alignment span on reference * 3)
+            reference_coverage_nt = coverage_len * 3
+            
+            # Calculate alignment/genomic ratio (User requested metric)
+            # (reference_coverage_nt) / genomic_region_nt
+            alignment_genomic_ratio = reference_coverage_nt / genomic_len_nt if genomic_len_nt > 0 else 0
+            
+            # Determine classification
+            if ann.is_pseudogene:
+                if ann.is_small_orf:
+                    classification = 'Pseudogene (Small ORF)'
+                else:
+                    classification = 'Pseudogene (Detected)'
             else:
-                classification = 'Functional'
+                if ann.is_small_orf:
+                    classification = 'Functional (Small ORF)'
+                else:
+                    classification = 'Functional (Possible Gene)'
             
             coverage_data.append({
                 'chromosome': ann.region_annotation.region.chromosome,
@@ -742,9 +821,12 @@ def save_coverage_statistics(
                 'strand': ann.region_annotation.region.strand,
                 'protein_id': ann.region_annotation.best_protein.protein_id,
                 'is_pseudogene': ann.is_pseudogene,
-                'is_short_domain': ann.is_short_domain,
+                'is_small_orf': ann.is_small_orf,
                 'classification': classification,
                 'alignment_coverage_aa': coverage_len,
+                'alignment_coverage_nt': alignment_coverage_nt,
+                'reference_coverage_nt': reference_coverage_nt,
+                'alignment_genomic_ratio': round(alignment_genomic_ratio, 3),
                 'reference_length_aa': ref_len,
                 'coverage_ratio': round(coverage_ratio, 3),
                 'genomic_region_nt': genomic_len_nt,
@@ -769,23 +851,33 @@ def save_coverage_statistics(
     logger.debug(f"Coverage statistics saved: {len(coverage_data)} regions")
 
 
-def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
+def generate_summary_report(annotations: List[PseudogeneAnnotation], min_coverage: float = 0.8) -> str:
     """
-    Gera um relatório resumido das anotações de pseudogenes.
+    Gera relatório resumido das anotações.
     
     Args:
-        annotations: Lista de anotações de pseudogenes
+        annotations: Lista de anotações
+        min_coverage: Limite de cobertura para relatório (default: 0.8)
     
     Returns:
         String com o relatório formatado
     """
     total_regions = len(annotations)
-    num_short_domains = sum(1 for ann in annotations if ann.is_short_domain)
     
-    # Exclude short domains from classification counts
-    classifiable_regions = [ann for ann in annotations if not ann.is_short_domain]
-    num_pseudogenes = sum(1 for ann in classifiable_regions if ann.is_pseudogene)
-    num_functional = len(classifiable_regions) - num_pseudogenes
+    # Classification Breakdown
+    functional_anns = [ann for ann in annotations if not ann.is_pseudogene]
+    pseudogene_anns = [ann for ann in annotations if ann.is_pseudogene]
+    
+    num_functional = len(functional_anns)
+    num_pseudogenes = len(pseudogene_anns)
+    
+    # Functional Sub-categories
+    func_possible_genes = sum(1 for ann in functional_anns if not ann.is_small_orf)
+    func_small_orfs = sum(1 for ann in functional_anns if ann.is_small_orf)
+    
+    # Pseudogene Sub-categories
+    pseudo_detected = sum(1 for ann in pseudogene_anns if not ann.is_small_orf)
+    pseudo_small_orfs = sum(1 for ann in pseudogene_anns if ann.is_small_orf)
     
     # Estatísticas de mutações
     total_substitutions = sum(ann.disablements.non_synonymous_substitutions for ann in annotations)
@@ -796,12 +888,8 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
     total_premature_stops = sum(ann.disablements.premature_stop_codons for ann in annotations)
     
     # NOVA SEÇÃO: Análise de cobertura e tamanho
-    # Exclude short domains from coverage analysis
     coverage_stats = []
     for ann in annotations:
-        # Skip short domains - they are analyzed separately
-        if ann.is_short_domain:
-            continue
             
         hsps = ann.region_annotation.best_protein.hsps
         if hsps:
@@ -815,31 +903,42 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
                 'coverage_len': coverage_len,
                 'ref_len': ref_len,
                 'ratio': coverage_ratio,
-                'is_pseudogene': ann.is_pseudogene
+                'is_pseudogene': ann.is_pseudogene,
+                'is_small_orf': ann.is_small_orf
             })
     
-    # Estatísticas de cobertura para genes funcionais e pseudogenes (excluindo domínios curtos)
-    functional_coverage = [s for s in coverage_stats if not s['is_pseudogene']]
-    pseudogene_coverage = [s for s in coverage_stats if s['is_pseudogene']]
+    # Helper function for stats
+    def calc_stats(ratios):
+        if not ratios:
+            return 0, 0, 0, 0
+        avg = sum(ratios) / len(ratios)
+        mn = min(ratios)
+        mx = max(ratios)
+        below_threshold = sum(1 for r in ratios if r < min_coverage)
+        return avg, mn, mx, below_threshold
     
-    # Calcular distribuição de ratios
-    if functional_coverage:
-        func_ratios = [s['ratio'] for s in functional_coverage]
-        func_avg_ratio = sum(func_ratios) / len(func_ratios)
-        func_min_ratio = min(func_ratios)
-        func_max_ratio = max(func_ratios)
-        func_below_80 = sum(1 for r in func_ratios if r < 0.8)
-    else:
-        func_avg_ratio = func_min_ratio = func_max_ratio = func_below_80 = 0
-    
-    if pseudogene_coverage:
-        pseudo_ratios = [s['ratio'] for s in pseudogene_coverage]
-        pseudo_avg_ratio = sum(pseudo_ratios) / len(pseudo_ratios)
-        pseudo_min_ratio = min(pseudo_ratios)
-        pseudo_max_ratio = max(pseudo_ratios)
-        pseudo_below_80 = sum(1 for r in pseudo_ratios if r < 0.8)
-    else:
-        pseudo_avg_ratio = pseudo_min_ratio = pseudo_max_ratio = pseudo_below_80 = 0
+    # DEBUG
+    # print(f"DEBUG: min_coverage={min_coverage}")
+
+    # 1. Functional - Possible Genes
+    func_possible_ratios = [s['ratio'] for s in coverage_stats if not s['is_pseudogene'] and not s['is_small_orf']]
+    fp_avg, fp_min, fp_max, fp_below = calc_stats(func_possible_ratios)
+    fp_count = len(func_possible_ratios)
+
+    # 2. Functional - Small ORFs
+    func_small_ratios = [s['ratio'] for s in coverage_stats if not s['is_pseudogene'] and s['is_small_orf']]
+    fs_avg, fs_min, fs_max, fs_below = calc_stats(func_small_ratios)
+    fs_count = len(func_small_ratios)
+
+    # 3. Pseudogenes - Detected
+    pseudo_detected_ratios = [s['ratio'] for s in coverage_stats if s['is_pseudogene'] and not s['is_small_orf']]
+    pd_avg, pd_min, pd_max, pd_below = calc_stats(pseudo_detected_ratios)
+    pd_count = len(pseudo_detected_ratios)
+
+    # 4. Pseudogenes - Small ORFs
+    pseudo_small_ratios = [s['ratio'] for s in coverage_stats if s['is_pseudogene'] and s['is_small_orf']]
+    ps_avg, ps_min, ps_max, ps_below = calc_stats(pseudo_small_ratios)
+    ps_count = len(pseudo_small_ratios)
     
     report = f"""
 ╭──────────────────────────────────────────────────────────────────╮
@@ -849,10 +948,14 @@ def generate_summary_report(annotations: List[PseudogeneAnnotation]) -> str:
 GENERAL SUMMARY:
   Total regions analyzed:          {total_regions}
   
-  Classification (mutually exclusive):
-    Functional genes:                {num_functional} ({100*num_functional/total_regions if total_regions > 0 else 0:.1f}%)
-    Detected pseudogenes:            {num_pseudogenes} ({100*num_pseudogenes/total_regions if total_regions > 0 else 0:.1f}%)
-    Short domains (<150 nt):         {num_short_domains} ({100*num_short_domains/total_regions if total_regions > 0 else 0:.1f}%)
+  Classification:
+    Functional Genes:                {num_functional} ({100*num_functional/total_regions if total_regions else 0:.1f}%)
+      - Possible Genes:              {func_possible_genes} ({100*func_possible_genes/num_functional if num_functional else 0:.1f}%)
+      - Small ORFs:                  {func_small_orfs} ({100*func_small_orfs/num_functional if num_functional else 0:.1f}%)
+      
+    Pseudogenes:                     {num_pseudogenes} ({100*num_pseudogenes/total_regions if total_regions else 0:.1f}%)
+      - Detected Pseudogenes:        {pseudo_detected} ({100*pseudo_detected/num_pseudogenes if num_pseudogenes else 0:.1f}%)
+      - Small ORFs:                  {pseudo_small_orfs} ({100*pseudo_small_orfs/num_pseudogenes if num_pseudogenes else 0:.1f}%)
 
 MUTATION STATISTICS:
   Non-synonymous substitutions:    {total_substitutions}
@@ -867,17 +970,29 @@ MUTATION STATISTICS:
 REFERENCE PROTEIN COVERAGE ANALYSIS:
   (Ratio = Alignment Coverage / Reference Size)
   
-  Functional Genes ({len(functional_coverage)} regions):
-    Mean coverage ratio:             {func_avg_ratio:.2f}
-    Minimum ratio:                   {func_min_ratio:.2f}
-    Maximum ratio:                   {func_max_ratio:.2f}
-    Regions with coverage <80%:      {func_below_80} ({100*func_below_80/len(functional_coverage) if functional_coverage else 0:.1f}%)
+  1. Functional - Possible Genes ({fp_count} regions):
+    Mean coverage ratio:             {fp_avg:.2f}
+    Minimum ratio:                   {fp_min:.2f}
+    Maximum ratio:                   {fp_max:.2f}
+    Regions with coverage <{int(min_coverage*100)}%:      {fp_below} ({100*fp_below/fp_count if fp_count else 0:.1f}%)
+
+  2. Functional - Small ORFs ({fs_count} regions):
+    Mean coverage ratio:             {fs_avg:.2f}
+    Minimum ratio:                   {fs_min:.2f}
+    Maximum ratio:                   {fs_max:.2f}
+    Regions with coverage <{int(min_coverage*100)}%:      {fs_below} ({100*fs_below/fs_count if fs_count else 0:.1f}%)
   
-  Pseudogenes ({len(pseudogene_coverage)} regions):
-    Mean coverage ratio:             {pseudo_avg_ratio:.2f}
-    Minimum ratio:                   {pseudo_min_ratio:.2f}
-    Maximum ratio:                   {pseudo_max_ratio:.2f}
-    Regions with coverage <80%:      {pseudo_below_80} ({100*pseudo_below_80/len(pseudogene_coverage) if pseudogene_coverage else 0:.1f}%)
+  3. Pseudogenes - Detected ({pd_count} regions):
+    Mean coverage ratio:             {pd_avg:.2f}
+    Minimum ratio:                   {pd_min:.2f}
+    Maximum ratio:                   {pd_max:.2f}
+    Regions with coverage <{int(min_coverage*100)}%:      {pd_below} ({100*pd_below/pd_count if pd_count else 0:.1f}%)
+
+  4. Pseudogenes - Small ORFs ({ps_count} regions):
+    Mean coverage ratio:             {ps_avg:.2f}
+    Minimum ratio:                   {ps_min:.2f}
+    Maximum ratio:                   {ps_max:.2f}
+    Regions with coverage <{int(min_coverage*100)}%:      {ps_below} ({100*ps_below/ps_count if ps_count else 0:.1f}%)
 
 
 """

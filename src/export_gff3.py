@@ -107,6 +107,10 @@ def _build_gff3_attributes(
     status = "Pseudogene" if annotation.is_pseudogene else "Functional"
     attributes.append(f"Status={status}")
     
+    # Small ORF status
+    if annotation.is_small_orf:
+        attributes.append("Small_ORF=True")
+    
     # Reference protein
     best_protein_id = annotation.region_annotation.best_protein.protein_id
     if best_protein_id:
