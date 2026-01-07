@@ -405,8 +405,11 @@ This will:
 - Download FASTA files from NCBI using efetch
 - Create a metadata.tsv file with genome_id and pathovar columns
 - Normalize genome IDs (dots → underscores) for pipeline compatibility
-- Include all 7 non-pathogenic genomes (marked with `NOT` pathovar)
+- Include all non-pathogenic genomes (marked with `NOT` pathovar)
 
 The combined CSV (`BVBRC_genome_combined.csv`) includes:
-- 148 pathogenic E. coli genomes (EHEC, STEC, UPEC, AIEC, etc.)
-- 7 non-pathogenic genomes including K-12 MG1655 reference strain
+- 148 pathogenic/clinical E. coli genomes (EHEC, STEC, UPEC, AIEC, ETEC, etc.)
+- 14 non-pathogenic reference strains including:
+  - Laboratory strains: K-12 MG1655, BW25113, K-12 J53
+  - Commensal isolates: HS, HS4, HS1496, HS13-1, HS30-1, 2 HS-C
+  - Clinical non-pathogenic isolates: MSHS 472, MSHS 133, 6535NalR
