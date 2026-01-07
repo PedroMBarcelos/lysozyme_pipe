@@ -392,13 +392,21 @@ genome_id	pathovar	species	strain
 - Visualizations will group genomes by `pathovar` values directly
 - Use consistent naming: genome IDs with dots are normalized to underscores automatically
 
-# Non pathogenic vars
+## Genome Download Utility
 
-# Non-pathogenic
-   ncbi-genomes-2022-11-16/GCA_000005845.2_ASM584v2_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_900092615.1_PRJEB14041_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_017355065.1_ASM1735506v1_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_017355085.1_ASM1735508v1_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_017355105.1_ASM1735510v1_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_017355125.1_ASM1735512v1_genomic.fna.gz
-   ncbi-genomes-2022-11-16/GCA_017355145.1_ASM1735514v1_genomic.fna.gz
+The pipeline includes `download_genomes.py` to fetch genomes from NCBI using BVBRC metadata CSV files:
+
+```bash
+python download_genomes.py BVBRC_genome_combined.csv downloaded_genomes/
+```
+
+This will:
+- Extract genome IDs and assembly accessions from the CSV
+- Download FASTA files from NCBI using efetch
+- Create a metadata.tsv file with genome_id and pathovar columns
+- Normalize genome IDs (dots → underscores) for pipeline compatibility
+- Include all 7 non-pathogenic genomes (marked with `NOT` pathovar)
+
+The combined CSV (`BVBRC_genome_combined.csv`) includes:
+- 148 pathogenic E. coli genomes (EHEC, STEC, UPEC, AIEC, etc.)
+- 7 non-pathogenic genomes including K-12 MG1655 reference strain

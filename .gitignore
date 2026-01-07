@@ -25,6 +25,8 @@ ENV/
 output/
 results/
 batch_results/
+downloaded_genomes/
+test_download/
 
 # External tools (downloaded by pipeline)
 BLAST/
@@ -39,6 +41,12 @@ FASTA36/
 *.fq
 *.gz
 *.bz2
+
+# CSV files (except templates and combined)
+BVBRC_genome.csv
+BVBRC_genome (1).csv
+!BVBRC_genome_combined.csv
+!BVBRC_nonpathogenic_genomes.csv
 
 # Logs
 *.log

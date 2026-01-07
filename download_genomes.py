@@ -97,7 +97,7 @@ def download_genome_ncbi(accession: str, output_dir: Path, genome_id: str) -> Op
     """Download genome FASTA from NCBI."""
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Sanitize genome_id for filename
+    # Sanitize genome_id for filename - normalize dots to underscores
     safe_id = str(genome_id).replace(' ', '_').replace('/', '_').replace(':', '_').replace('.', '_')
     output_fasta = output_dir / f"{safe_id}.fasta"
     
@@ -116,11 +116,21 @@ def create_metadata_file(genome_info: pd.DataFrame, output_path: Path):
     logger.info(f"Creating metadata file: {output_path}")
     
     metadata = genome_info[['genome_id', 'genome_name', 'strain', 'pathovar', 'primary_accession']].copy()
-    # Ensure genome_id is string
-    metadata['genome_id'] = metadata['genome_id'].astype(str)
+    # Ensure genome_id is string and normalize format (dots to underscores)
+    metadata['genome_id'] = metadata['genome_id'].astype(str).str.replace('.', '_')
+    
+    # Ensure pathovar defaults to 'Unknown' if missing
+    metadata['pathovar'] = metadata['pathovar'].fillna('Unknown')
+    
     metadata.to_csv(output_path, sep='\t', index=False)
     
     logger.info(f"Metadata saved with {len(metadata)} genomes")
+    
+    # Log pathovar distribution
+    pathovar_counts = metadata['pathovar'].value_counts()
+    logger.info(f"\nPathovar distribution in metadata:")
+    for pathovar, count in pathovar_counts.items():
+        logger.info(f"  {pathovar}: {count}")
 
 
 def main():
