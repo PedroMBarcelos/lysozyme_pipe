@@ -106,14 +106,15 @@ This will:
 
 ### Comparative Analysis
 
-After batch processing, perform statistical comparison between pathogenic and non-pathogenic groups:
+After batch processing, perform statistical comparison between different pathotype groups:
 
-1. Create metadata file (`metadata.tsv`):
+1. Create metadata file (`metadata.tsv`) with pathovar information:
 ```tsv
-genome_id	pathogenicity	species	strain
-genome1	pathogenic	E. coli	O157:H7
-genome2	non-pathogenic	E. coli	K-12
-genome3	pathogenic	Salmonella enterica	Typhimurium
+genome_id	pathovar	species	strain
+562_13551	EHEC	Escherichia coli	O157:H7
+83334_298	NOT	Escherichia coli	K-12 MG1655
+199310_4	AIEC	Escherichia coli	LF82
+574521_7	EHEC	Escherichia coli	O104:H4
 ```
 
 2. Run comparative analysis:
@@ -127,8 +128,13 @@ python comparative_analysis.py \
 This generates:
 - Statistical tests (Mann-Whitney U) for pseudogene rates, score density, frameshifts
 - Protein classification (core/accessory/unique)
-- Differential protein identification
-- Five publication-quality visualizations (heatmaps, PCA, dendrogram, boxplots)
+- Differential protein identification between groups
+- Five publication-quality visualizations grouped by pathovar:
+  - Presence/absence heatmap
+  - Pseudogenization heatmap  
+  - PCA with pathovar-based coloring
+  - Hierarchical dendrogram with pathovar-colored labels
+  - Boxplots comparing metrics across pathovars
 - Executive report (Markdown) with automated conclusions
 
 ## Pipeline Steps
@@ -184,8 +190,17 @@ Identifies inactivating mutations:
 
 Start/stop codon verification strategy:
 1. Check if alignment includes start (M at position 1) or stop (reaches query end)
-2. If not, search ±150bp in genomic DNA
-3. Mark as missing if not found
+2. If not, search in genomic DNA with **in-frame search** (step=3) within dynamic padding window
+3. Dynamic padding = min(150 bp, 20% of reference protein length × 3)
+4. Mark as missing if not found within the padded region
+
+### Coverage Metrics
+
+Three coverage metrics are calculated:
+
+1. **reference_coverage_nt**: Alignment length × 3 (estimated nucleotide coverage)
+2. **alignment_coverage_nt**: Exact genomic coverage from subject coordinates (sstart to send)
+3. **alignment_genomic_ratio**: alignment_coverage_nt / reference_coverage_nt (compactness measure, ~1.0 for no gaps/frameshifts)
 
 ## Output Files
 
@@ -292,22 +307,35 @@ Core protein definition:
 
 ## Parameters
 
-### BLAST Parameters
-- `--evalue`: E-value threshold (default: 1e-10)
-- `--num-threads`: CPU threads for parallelization (default: 1)
+### Input/Output Parameters
+
+**Required:**
+- `-g, --genome FASTA`: Single genome FASTA file (mutually exclusive with `--input-dir`)
+- `--input-dir DIR`: Directory with multiple FASTA files for batch processing (mutually exclusive with `-g`)
+- `-l, --lysozymes FASTA`: Reference lysozyme protein sequences (UniProtKB/Swiss-Prot format)
+- `-o, --output DIR`: Output directory for all results
 
 ### Filtering Parameters
-- `--min-identity`: Minimum % identity (default: 20)
-- `--min-score`: Minimum BLOSUM62 score (default: 120)
 
-### SSEARCH Parameters
-- `--ssearch-shuffles`: Number of permutations (default: 1000)
+- `--min-identity FLOAT`: Minimum percent identity for BLAST filtering (default: 20.0)
+- `--min-score INT`: Minimum BLOSUM62 score for BLAST filtering (default: 120)
+- `--min-disablements INT`: Minimum number of inactivating mutations to classify as pseudogene (default: 1)
+- `--min-coverage FLOAT`: Minimum alignment coverage ratio for reporting (default: 0.8)
+- `--final-min-identity FLOAT`: Final identity filter applied after all processing (default: 0.0 - disabled)
 
-### Pseudogene Detection
-- `--min-disablements`: Minimum mutations for pseudogene classification (default: 1)
+### Execution Options
 
-### Comparative Analysis
-- `--alpha`: Statistical significance level (default: 0.05)
+- `--num-threads INT`: Number of CPU threads for SSEARCH parallel execution (default: CPU_COUNT - 1)
+- `-v, --verbose`: Enable detailed debug messages
+- `--log-file FILE`: Save logs to specified file (optional)
+
+### Comparative Analysis Parameters
+
+When using `comparative_analysis.py`:
+- `--batch-output DIR`: Directory containing batch processing results
+- `--metadata FILE`: TSV file with genome metadata (genome_id, pathovar, species, strain)
+- `--output-dir DIR`: Output directory for comparative results
+- `--alpha FLOAT`: Statistical significance level for tests (default: 0.05)
 
 ## Troubleshooting
 
@@ -342,9 +370,27 @@ Verify reference proteins are appropriate for target organism. Consider:
 
 ### Comparative analysis errors
 Ensure:
-- Metadata `genome_id` matches genome filenames exactly
-- `pathogenicity` values are: `pathogenic`, `non-pathogenic`, or `unknown`
+- Metadata `genome_id` matches genome filenames exactly (or genome IDs from BVBRC metadata)
+- `pathovar` column exists with values like: `EHEC`, `AIEC`, `NOT`, etc.
 - TSV file uses tab separators (not spaces)
+- genome_id format consistency: dots (562.13551) are automatically normalized to underscores (562_13551)
+
+### Metadata File Format
+
+The metadata file should be tab-separated (TSV) with these columns:
+
+```tsv
+genome_id	pathovar	species	strain
+562_13551	EHEC	Escherichia coli	O157:H7
+83334_298	NOT	Escherichia coli	K-12 MG1655
+199310_4	AIEC	Escherichia coli	LF82
+```
+
+**Important:**
+- `genome_id`: Must match FASTA filenames (without extension) or BVBRC genome IDs
+- `pathovar`: Pathotype/pathovar designation (e.g., EHEC, EPEC, AIEC, NOT for non-pathogenic)
+- Visualizations will group genomes by `pathovar` values directly
+- Use consistent naming: genome IDs with dots are normalized to underscores automatically
 
 # Non pathogenic vars
 
