@@ -170,25 +170,20 @@ def install_bedtools() -> Path:
 def get_blast_paths() -> Tuple[str, str]:
     """
     Retorna os caminhos para makeblastdb e tblastn.
-    Instala BLAST+ localmente se necessário.
+    FORÇA uso da instalação local para evitar problemas com versões do sistema.
     
     Returns:
         Tupla (makeblastdb_path, tblastn_path)
     """
-    # Check local installation first
+    # FORÇA instalação local (ignora sistema)
     if BLAST_DIR.exists():
         makeblastdb_path = str(BLAST_DIR / "bin" / "makeblastdb")
         tblastn_path = str(BLAST_DIR / "bin" / "tblastn")
-        logger.debug("Using local BLAST+")
+        logger.debug("Using LOCAL BLAST+ (forced)")
         return makeblastdb_path, tblastn_path
     
-    # Check system PATH
-    if check_tool_in_path("makeblastdb") and check_tool_in_path("tblastn"):
-        logger.debug("Using system BLAST+ (PATH)")
-        return "makeblastdb", "tblastn"
-    
     # Instala localmente
-    logger.warning("BLAST+ não encontrado. Instalando localmente...")
+    logger.info("Installing BLAST+ locally (forced local installation)...")
     blast_bin = install_blast()
     return str(blast_bin / "makeblastdb"), str(blast_bin / "tblastn")
 
@@ -196,23 +191,18 @@ def get_blast_paths() -> Tuple[str, str]:
 def get_bedtools_path() -> str:
     """
     Return path to bedtools.
-    Install BEDTools locally if needed.
+    FORÇA uso da instalação local para evitar problemas com versões do sistema.
     
     Returns:
         Path to bedtools executable
     """
-    # Check local installation first
+    # FORÇA instalação local (ignora sistema)
     if BEDTOOLS_DIR.exists() and (BEDTOOLS_DIR / "bin" / "bedtools").exists():
-        logger.debug("Using local BEDTools")
+        logger.debug("Using LOCAL BEDTools (forced)")
         return str(BEDTOOLS_DIR / "bin" / "bedtools")
     
-    # Check system PATH
-    if check_tool_in_path("bedtools"):
-        logger.debug("Using system BEDTools (PATH)")
-        return "bedtools"
-    
     # Install locally
-    logger.debug("BEDTools not found. Installing locally...")
+    logger.info("Installing BEDTools locally (forced local installation)...")
     bedtools_bin = install_bedtools()
     return str(bedtools_bin / "bedtools")
 
@@ -272,6 +262,7 @@ def install_fasta36() -> Path:
 def get_ssearch_path() -> str:
     """
     Return path to ssearch36 (required).
+    FORÇA uso da instalação local para evitar problemas com versões do sistema.
     
     Returns:
         Path to ssearch36
@@ -279,19 +270,14 @@ def get_ssearch_path() -> str:
     Raises:
         RuntimeError: If ssearch36 not found
     """
-    # Check local installation first
+    # FORÇA instalação local (ignora sistema)
     if FASTA36_DIR.exists() and (FASTA36_DIR / "bin" / "ssearch36").exists():
         ssearch_path = str(FASTA36_DIR / "bin" / "ssearch36")
-        logger.debug(f"Using local SSEARCH36: {ssearch_path}")
+        logger.debug(f"Using LOCAL SSEARCH36 (forced): {ssearch_path}")
         return ssearch_path
     
-    # Check system PATH
-    if check_tool_in_path("ssearch36"):
-        logger.debug("Using system SSEARCH36 (PATH)")
-        return "ssearch36"
-    
     # SSEARCH36 not found - install automatically
-    logger.debug("SSEARCH36 not found. Installing FASTA36...")
+    logger.info("Installing FASTA36 locally (forced local installation)...")
     install_fasta36()
     
     if FASTA36_DIR.exists() and (FASTA36_DIR / "bin" / "ssearch36").exists():

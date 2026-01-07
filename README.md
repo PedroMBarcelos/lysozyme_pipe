@@ -40,7 +40,12 @@ This pipeline implements a workflow for identifying and characterizing lysozyme 
 - BEDTools (>= 2.29.0) - **Required**
 - FASTA36 suite (ssearch36) - **Required**
 
-The pipeline can automatically download and install these tools locally if not found in system PATH.
+**Important**: The pipeline **automatically installs and uses local versions** of these tools in the following directories to avoid conflicts with potentially corrupted system installations:
+- `BLAST/ncbi-blast-2.17.0+/` - BLAST+ suite
+- `BEDTOOLS/bedtools2/` - BEDTools suite  
+- `FASTA36/fasta-36.3.8i/` - FASTA36 suite (includes ssearch36)
+
+System-installed versions are **ignored** to ensure compatibility and avoid SIGSEGV errors. The local installations are downloaded and configured automatically on first run.
 
 ### Python Dependencies
 
@@ -64,13 +69,12 @@ cd ~/Documents/lysozyme_pipeline
 pip install -r requirements.txt
 ```
 
-3. Verify external tools (optional - pipeline will install if missing):
-```bash
-makeblastdb -version
-tblastn -version
-bedtools --version
-ssearch36 -h
-```
+3. **External tools are automatically installed on first run** - no manual installation needed!
+   - BLAST+ will be downloaded to `BLAST/ncbi-blast-2.17.0+/`
+   - BEDTools will be compiled in `BEDTOOLS/bedtools2/`
+   - FASTA36 will be installed in `FASTA36/fasta-36.3.8i/`
+
+The first run will take a few minutes to download and compile these tools. Subsequent runs will use the local installations immediately.
 
 ## Usage
 
@@ -339,24 +343,39 @@ When using `comparative_analysis.py`:
 
 ## Troubleshooting
 
-### BLAST+ not found
-The pipeline will attempt automatic installation to `BLAST/` directory. If this fails:
+### BLAST crashes with SIGSEGV or corrupted installation
+
+**The pipeline now FORCES local installation** to avoid these problems. System-installed versions are ignored.
+
+If you still encounter issues:
+
+1. **Remove existing local installation** and let it reinstall:
 ```bash
-sudo apt install ncbi-blast+  # Debian/Ubuntu
-brew install blast            # macOS
+rm -rf BLAST/ BEDTOOLS/ FASTA36/
+python pipeline.py ...  # Will reinstall fresh versions
 ```
 
-### BEDTools compilation failed
+2. **Manual local installation** (if automatic fails):
 ```bash
-sudo apt install build-essential zlib1g-dev
+# BLAST+
+cd ~/
+wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/ncbi-blast-2.17.0+-x64-linux.tar.gz
+tar -xzf ncbi-blast-2.17.0+-x64-linux.tar.gz
+mkdir -p lysozyme_pipeline/BLAST/
+mv ncbi-blast-2.17.0+ lysozyme_pipeline/BLAST/
+
+# BEDTools (requires build-essential and zlib1g-dev)
+cd lysozyme_pipeline/BEDTOOLS/
+wget https://github.com/arq5x/bedtools2/releases/download/v2.31.1/bedtools-2.31.1.tar.gz
+tar -xzf bedtools-2.31.1.tar.gz
+cd bedtools2
+make -j8
 ```
 
-### SSEARCH not available
-SSEARCH is required for the pipeline. To install:
+3. **Check prerequisites for BEDTools compilation**:
 ```bash
-sudo apt install fasta3       # Debian/Ubuntu
+sudo apt install build-essential zlib1g-dev  # Debian/Ubuntu
 ```
-Alternatively, the pipeline will attempt automatic installation.
 
 ### Low pseudogene count
 Check alignment quality with `--verbose` flag. Consider adjusting:
