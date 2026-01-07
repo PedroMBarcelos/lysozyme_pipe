@@ -26,6 +26,38 @@ plt.rcParams['figure.dpi'] = 300
 plt.rcParams['savefig.dpi'] = 300
 
 
+def map_pathovar_to_pathogenicity(pathovar: str) -> str:
+    """
+    Map pathovar to pathogenicity category.
+    
+    Args:
+        pathovar: Pathovar from metadata (e.g., 'EHEC', 'UPEC', 'Unknown')
+    
+    Returns:
+        Pathogenicity category: 'pathogenic', 'non-pathogenic', or 'unknown'
+    """
+    if pd.isna(pathovar) or pathovar == 'Unknown' or pathovar == '':
+        return 'unknown'
+    
+    pathovar_upper = str(pathovar).upper().strip()
+    
+    # Known pathogenic pathovars
+    pathogenic = ['EHEC', 'EPEC', 'ETEC', 'EIEC', 'EAEC', 'DAEC', 'UPEC', 'NMEC', 'STEC', 'VTEC', 'AIEC']
+    
+    # Known non-pathogenic indicators
+    non_pathogenic = ['NOT', 'NON', 'COMMENSAL', 'NON-PATHOGENIC']
+    
+    for pathogen in pathogenic:
+        if pathogen in pathovar_upper:
+            return 'pathogenic'
+    
+    for non_path in non_pathogenic:
+        if non_path in pathovar_upper:
+            return 'non-pathogenic'
+    
+    return 'unknown'
+
+
 def plot_presence_absence_heatmap(
     matrix: pd.DataFrame,
     metadata_df: pd.DataFrame,
@@ -41,8 +73,19 @@ def plot_presence_absence_heatmap(
     """
     logger.info("Gerando heatmap de presença/ausência...")
     
+    # Map pathovar to pathogenicity categories
+    if 'pathovar' in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
+    elif 'pathogenicity' not in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = 'unknown'
+    
+    # Normalize genome_id format (handle dots vs underscores)
+    metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
+    
     # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id')['pathogenicity'].to_dict()
+    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
     
     # Cores para pathogenicity
     genome_colors = []
@@ -102,8 +145,19 @@ def plot_pseudogenization_heatmap(
     """
     logger.info("Gerando heatmap de pseudogenização...")
     
+    # Map pathovar to pathogenicity categories
+    if 'pathovar' in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
+    elif 'pathogenicity' not in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = 'unknown'
+    
+    # Normalize genome_id format
+    metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
+    
     # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id')['pathogenicity'].to_dict()
+    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
     
     # Cores para pathogenicity
     genome_colors = []
@@ -194,8 +248,19 @@ def plot_pca(
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(features_scaled)
     
+    # Map pathovar to pathogenicity categories
+    if 'pathovar' in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
+    elif 'pathogenicity' not in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = 'unknown'
+    
+    # Normalize genome_id format
+    metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
+    
     # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id')['pathogenicity'].to_dict()
+    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
     colors = [pathogenicity_map.get(g, 'unknown') for g in genome_ids]
     
     # Plot
@@ -261,8 +326,19 @@ def plot_dendrogram(
     # Calcula linkage
     linkage_matrix = linkage(genome_matrix, method='ward', metric='euclidean')
     
+    # Map pathovar to pathogenicity categories
+    if 'pathovar' in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
+    elif 'pathogenicity' not in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = 'unknown'
+    
+    # Normalize genome_id format
+    metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
+    
     # Mapeia pathogenicity para cores
-    pathogenicity_map = metadata_df.set_index('genome_id')['pathogenicity'].to_dict()
+    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
     
     # Plot
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -300,7 +376,7 @@ def plot_group_comparisons(
     output_path: Path
 ) -> None:
     """
-    Gera boxplots comparando grupos patogênicos vs não-patogênicos.
+    Gera boxplots comparando grupos de patogenicidade.
     
     Args:
         aggregated_df: DataFrame agregado
@@ -309,13 +385,36 @@ def plot_group_comparisons(
     """
     logger.info("Gerando boxplots comparativos...")
     
-    # Merge com metadados
-    merged = aggregated_df.merge(metadata_df[['genome_id', 'pathogenicity']], on='genome_id', how='left')
-    merged = merged[merged['pathogenicity'].isin(['pathogenic', 'non-pathogenic'])]
+    # Map pathovar to pathogenicity
+    if 'pathovar' in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
+    elif 'pathogenicity' not in metadata_df.columns:
+        metadata_df = metadata_df.copy()
+        metadata_df['pathogenicity'] = 'unknown'
+    
+    # Normalize genome_id format
+    metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
+    aggregated_df = aggregated_df.copy()
+    aggregated_df['genome_id_normalized'] = aggregated_df['genome_id'].astype(str).str.replace('.', '_')
+    
+    # Merge com metadados usando genome_id_normalized
+    merged = aggregated_df.merge(
+        metadata_df[['genome_id_normalized', 'pathogenicity']], 
+        on='genome_id_normalized', 
+        how='left'
+    )
+    
+    # Keep all groups (pathogenic, non-pathogenic, unknown)
+    merged = merged[merged['pathogenicity'].notna()]
+    
+    if len(merged) == 0:
+        logger.warning("No data after merging with metadata, skipping boxplots")
+        return
     
     # Calcula métricas por genoma
-    genome_metrics = merged.groupby(['genome_id', 'pathogenicity']).agg({
-        'is_pseudogene': lambda x: (x.sum() / len(x)) * 100,
+    genome_metrics = merged.groupby(['genome_id_normalized', 'pathogenicity']).agg({
+        'is_pseudogene': lambda x: (x.sum() / len(x)) * 100 if len(x) > 0 else 0,
         'score_density': 'mean',
         'frameshifts': 'sum',
         'premature_stop_codons': 'sum'
@@ -323,56 +422,81 @@ def plot_group_comparisons(
     
     genome_metrics.columns = ['genome_id', 'pathogenicity', 'pseudogene_rate', 'mean_score_density', 'total_frameshifts', 'total_premature_stops']
     
+    # Define color palette dynamically
+    unique_groups = genome_metrics['pathogenicity'].unique()
+    color_palette = {
+        'pathogenic': '#d62728',
+        'non-pathogenic': '#2ca02c',
+        'unknown': '#7f7f7f'
+    }
+    palette = {group: color_palette.get(group, '#1f77b4') for group in unique_groups}
+    
     # Cria subplot
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
     # 1. Taxa de pseudogenes
-    sns.boxplot(
-        data=genome_metrics,
-        x='pathogenicity',
-        y='pseudogene_rate',
-        palette={'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c'},
-        ax=axes[0, 0]
-    )
-    axes[0, 0].set_title('Taxa de Pseudogenes', fontweight='bold')
-    axes[0, 0].set_ylabel('Pseudogenes (%)')
-    axes[0, 0].set_xlabel('')
+    if len(genome_metrics) > 0:
+        sns.boxplot(
+            data=genome_metrics,
+            x='pathogenicity',
+            y='pseudogene_rate',
+            hue='pathogenicity',
+            palette=palette,
+            legend=False,
+            ax=axes[0, 0]
+        )
+        axes[0, 0].set_title('Taxa de Pseudogenes', fontweight='bold')
+        axes[0, 0].set_ylabel('Pseudogenes (%)')
+        axes[0, 0].set_xlabel('')
+        axes[0, 0].tick_params(axis='x', rotation=45)
     
     # 2. Score density
-    sns.boxplot(
-        data=genome_metrics,
-        x='pathogenicity',
-        y='mean_score_density',
-        palette={'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c'},
-        ax=axes[0, 1]
-    )
-    axes[0, 1].set_title('Score Density Médio', fontweight='bold')
-    axes[0, 1].set_ylabel('Score Density')
-    axes[0, 1].set_xlabel('')
+    if len(genome_metrics) > 0:
+        sns.boxplot(
+            data=genome_metrics,
+            x='pathogenicity',
+            y='mean_score_density',
+            hue='pathogenicity',
+            palette=palette,
+            legend=False,
+            ax=axes[0, 1]
+        )
+        axes[0, 1].set_title('Score Density Médio', fontweight='bold')
+        axes[0, 1].set_ylabel('Score Density')
+        axes[0, 1].set_xlabel('')
+        axes[0, 1].tick_params(axis='x', rotation=45)
     
     # 3. Frameshifts
-    sns.boxplot(
-        data=genome_metrics,
-        x='pathogenicity',
-        y='total_frameshifts',
-        palette={'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c'},
-        ax=axes[1, 0]
-    )
-    axes[1, 0].set_title('Frameshifts Totais', fontweight='bold')
-    axes[1, 0].set_ylabel('Número de Frameshifts')
-    axes[1, 0].set_xlabel('Grupo')
+    if len(genome_metrics) > 0:
+        sns.boxplot(
+            data=genome_metrics,
+            x='pathogenicity',
+            y='total_frameshifts',
+            hue='pathogenicity',
+            palette=palette,
+            legend=False,
+            ax=axes[1, 0]
+        )
+        axes[1, 0].set_title('Frameshifts Totais', fontweight='bold')
+        axes[1, 0].set_ylabel('Número de Frameshifts')
+        axes[1, 0].set_xlabel('Grupo')
+        axes[1, 0].tick_params(axis='x', rotation=45)
     
     # 4. Stop codons prematuros
-    sns.boxplot(
-        data=genome_metrics,
-        x='pathogenicity',
-        y='total_premature_stops',
-        palette={'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c'},
-        ax=axes[1, 1]
-    )
-    axes[1, 1].set_title('Stop Codons Prematuros', fontweight='bold')
-    axes[1, 1].set_ylabel('Número de Stops Prematuros')
-    axes[1, 1].set_xlabel('Grupo')
+    if len(genome_metrics) > 0:
+        sns.boxplot(
+            data=genome_metrics,
+            x='pathogenicity',
+            y='total_premature_stops',
+            hue='pathogenicity',
+            palette=palette,
+            legend=False,
+            ax=axes[1, 1]
+        )
+        axes[1, 1].set_title('Stop Codons Prematuros', fontweight='bold')
+        axes[1, 1].set_ylabel('Número de Stops Prematuros')
+        axes[1, 1].set_xlabel('Grupo')
+        axes[1, 1].tick_params(axis='x', rotation=45)
     
     plt.suptitle('Comparação: Patogênicos vs Não-Patogênicos', fontsize=16, fontweight='bold', y=1.00)
     plt.tight_layout()

@@ -189,6 +189,55 @@ def generate_comparative_report(
         f.write("\n" + "=" * 80 + "\n")
     
     logger.debug(f"Text report saved: {report_path}")
+    
+    # 5. Generate visualizations
+    try:
+        from src.visualization import generate_all_visualizations
+        
+        # Check if metadata file exists (look in multiple locations)
+        metadata_paths = [
+            output_dir.parent / "metadata.tsv",  # Same parent as comparative_analysis
+            Path("downloaded_genomes") / "metadata.tsv",  # Default download location
+            Path("genomes") / "metadata.tsv",  # Alternative location
+        ]
+        
+        metadata_df = None
+        for metadata_path in metadata_paths:
+            if metadata_path.exists():
+                logger.info(f"Found metadata file: {metadata_path}")
+                metadata_df = pd.read_csv(metadata_path, sep='\t', dtype={'genome_id': str})
+                break
+        
+        if metadata_df is not None:
+            
+            # Create presence/absence matrix for visualizations
+            presence_matrix = create_presence_absence_matrix(aggregated_df)
+            
+            # Create pseudogenization matrix
+            pseudogenization_matrix = presence_matrix.copy()
+            for genome_id in aggregated_df['genome_id'].unique():
+                genome_data = aggregated_df[aggregated_df['genome_id'] == genome_id]
+                for protein_id in presence_matrix.index:
+                    protein_data = genome_data[genome_data['best_protein_id'] == protein_id]
+                    if not protein_data.empty:
+                        # Mark as 2 if pseudogene, 1 if functional
+                        is_pseudo = protein_data.iloc[0]['is_pseudogene']
+                        pseudogenization_matrix.loc[protein_id, genome_id] = 2 if is_pseudo else 1
+            
+            generate_all_visualizations(
+                aggregated_df,
+                metadata_df,
+                presence_matrix,
+                pseudogenization_matrix,
+                output_dir
+            )
+        else:
+            logger.warning(f"Metadata file not found at {metadata_path}, skipping visualizations")
+    except ImportError as e:
+        logger.warning(f"Visualization dependencies not available: {e}")
+    except Exception as e:
+        logger.error(f"Error generating visualizations: {e}", exc_info=True)
+    
     logger.info("Complete comparative report generated")
 
 
