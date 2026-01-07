@@ -26,38 +26,6 @@ plt.rcParams['figure.dpi'] = 300
 plt.rcParams['savefig.dpi'] = 300
 
 
-def map_pathovar_to_pathogenicity(pathovar: str) -> str:
-    """
-    Map pathovar to pathogenicity category.
-    
-    Args:
-        pathovar: Pathovar from metadata (e.g., 'EHEC', 'UPEC', 'Unknown')
-    
-    Returns:
-        Pathogenicity category: 'pathogenic', 'non-pathogenic', or 'unknown'
-    """
-    if pd.isna(pathovar) or pathovar == 'Unknown' or pathovar == '':
-        return 'unknown'
-    
-    pathovar_upper = str(pathovar).upper().strip()
-    
-    # Known pathogenic pathovars
-    pathogenic = ['EHEC', 'EPEC', 'ETEC', 'EIEC', 'EAEC', 'DAEC', 'UPEC', 'NMEC', 'STEC', 'VTEC', 'AIEC']
-    
-    # Known non-pathogenic indicators
-    non_pathogenic = ['NOT', 'NON', 'COMMENSAL', 'NON-PATHOGENIC']
-    
-    for pathogen in pathogenic:
-        if pathogen in pathovar_upper:
-            return 'pathogenic'
-    
-    for non_path in non_pathogenic:
-        if non_path in pathovar_upper:
-            return 'non-pathogenic'
-    
-    return 'unknown'
-
-
 def plot_presence_absence_heatmap(
     matrix: pd.DataFrame,
     metadata_df: pd.DataFrame,
@@ -73,30 +41,26 @@ def plot_presence_absence_heatmap(
     """
     logger.info("Gerando heatmap de presença/ausência...")
     
-    # Map pathovar to pathogenicity categories
-    if 'pathovar' in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
-    elif 'pathogenicity' not in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = 'unknown'
-    
     # Normalize genome_id format (handle dots vs underscores)
+    metadata_df = metadata_df.copy()
     metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
     
-    # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
+    # Use pathovar directly as the group
+    if 'pathovar' not in metadata_df.columns:
+        metadata_df['pathovar'] = 'Unknown'
     
-    # Cores para pathogenicity
+    # Mapeia pathovar
+    pathovar_map = metadata_df.set_index('genome_id_normalized')['pathovar'].to_dict()
+    
+    # Cores para pathovar (gera cores dinamicamente para cada grupo único)
+    unique_pathovars = list(set(pathovar_map.values()))
+    color_palette = plt.cm.Set3(range(len(unique_pathovars)))
+    pathovar_colors = {pv: color_palette[i] for i, pv in enumerate(unique_pathovars)}
+    
     genome_colors = []
     for genome in matrix.columns:
-        path = pathogenicity_map.get(genome, 'unknown')
-        if path == 'pathogenic':
-            genome_colors.append('#d62728')  # vermelho
-        elif path == 'non-pathogenic':
-            genome_colors.append('#2ca02c')  # verde
-        else:
-            genome_colors.append('#7f7f7f')  # cinza
+        pv = pathovar_map.get(genome, 'Unknown')
+        genome_colors.append(pathovar_colors.get(pv, '#7f7f7f'))
     
     # Cria figura
     fig, ax = plt.subplots(figsize=(max(12, len(matrix.columns) * 0.4), max(8, len(matrix) * 0.3)))
@@ -145,30 +109,26 @@ def plot_pseudogenization_heatmap(
     """
     logger.info("Gerando heatmap de pseudogenização...")
     
-    # Map pathovar to pathogenicity categories
-    if 'pathovar' in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
-    elif 'pathogenicity' not in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = 'unknown'
-    
     # Normalize genome_id format
+    metadata_df = metadata_df.copy()
     metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
     
-    # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
+    # Use pathovar directly as the group
+    if 'pathovar' not in metadata_df.columns:
+        metadata_df['pathovar'] = 'Unknown'
     
-    # Cores para pathogenicity
+    # Mapeia pathovar
+    pathovar_map = metadata_df.set_index('genome_id_normalized')['pathovar'].to_dict()
+    
+    # Cores para pathovar
+    unique_pathovars = list(set(pathovar_map.values()))
+    color_palette = plt.cm.Set3(range(len(unique_pathovars)))
+    pathovar_colors = {pv: color_palette[i] for i, pv in enumerate(unique_pathovars)}
+    
     genome_colors = []
     for genome in matrix.columns:
-        path = pathogenicity_map.get(genome, 'unknown')
-        if path == 'pathogenic':
-            genome_colors.append('#d62728')
-        elif path == 'non-pathogenic':
-            genome_colors.append('#2ca02c')
-        else:
-            genome_colors.append('#7f7f7f')
+        pv = pathovar_map.get(genome, 'Unknown')
+        genome_colors.append(pathovar_colors.get(pv, '#7f7f7f'))
     
     # Cria figura
     fig, ax = plt.subplots(figsize=(max(12, len(matrix.columns) * 0.4), max(8, len(matrix) * 0.3)))
@@ -248,34 +208,34 @@ def plot_pca(
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(features_scaled)
     
-    # Map pathovar to pathogenicity categories
-    if 'pathovar' in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
-    elif 'pathogenicity' not in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = 'unknown'
-    
     # Normalize genome_id format
+    metadata_df = metadata_df.copy()
     metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
     
-    # Mapeia pathogenicity
-    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
-    colors = [pathogenicity_map.get(g, 'unknown') for g in genome_ids]
+    # Use pathovar directly as the group
+    if 'pathovar' not in metadata_df.columns:
+        metadata_df['pathovar'] = 'Unknown'
+    
+    # Mapeia pathovar
+    pathovar_map = metadata_df.set_index('genome_id_normalized')['pathovar'].to_dict()
+    colors = [pathovar_map.get(g, 'Unknown') for g in genome_ids]
     
     # Plot
     fig, ax = plt.subplots(figsize=(10, 8))
     
-    color_map = {'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c', 'unknown': '#7f7f7f'}
+    # Generate colors for each unique pathovar
+    unique_pathovars = list(set(colors))
+    color_palette = plt.cm.Set3(range(len(unique_pathovars)))
+    color_map = {pv: color_palette[i] for i, pv in enumerate(unique_pathovars)}
     
-    for pathogenicity, color in color_map.items():
-        mask = [c == pathogenicity for c in colors]
+    for pathovar in unique_pathovars:
+        mask = [c == pathovar for c in colors]
         if any(mask):
             ax.scatter(
                 pca_result[mask, 0],
                 pca_result[mask, 1],
-                c=color,
-                label=pathogenicity.replace('_', ' ').title(),
+                c=[color_map[pathovar]],
+                label=pathovar,
                 s=100,
                 alpha=0.7,
                 edgecolors='black'
@@ -326,19 +286,16 @@ def plot_dendrogram(
     # Calcula linkage
     linkage_matrix = linkage(genome_matrix, method='ward', metric='euclidean')
     
-    # Map pathovar to pathogenicity categories
-    if 'pathovar' in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
-    elif 'pathogenicity' not in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = 'unknown'
-    
     # Normalize genome_id format
+    metadata_df = metadata_df.copy()
     metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
     
-    # Mapeia pathogenicity para cores
-    pathogenicity_map = metadata_df.set_index('genome_id_normalized')['pathogenicity'].to_dict()
+    # Use pathovar directly as the group
+    if 'pathovar' not in metadata_df.columns:
+        metadata_df['pathovar'] = 'Unknown'
+    
+    # Mapeia pathovar para cores
+    pathovar_map = metadata_df.set_index('genome_id_normalized')['pathovar'].to_dict()
     
     # Plot
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -350,8 +307,10 @@ def plot_dendrogram(
         orientation='right'
     )
     
-    # Colore labels por pathogenicity
-    color_map = {'pathogenic': '#d62728', 'non-pathogenic': '#2ca02c', 'unknown': '#7f7f7f'}
+    # Generate colors for unique pathovars
+    unique_pathovars = list(set(pathovar_map.values()))
+    color_palette_vals = plt.cm.Set3(range(len(unique_pathovars)))
+    color_map = {pv: color_palette_vals[i] for i, pv in enumerate(unique_pathovars)}
     
     ax.set_xlabel('Distância', fontsize=12)
     ax.set_title('Dendrograma - Similaridade de Perfis de Lisozimas', fontsize=14, fontweight='bold')
@@ -360,8 +319,8 @@ def plot_dendrogram(
     ylbls = ax.get_ymajorticklabels()
     for lbl in ylbls:
         genome_id = lbl.get_text()
-        path = pathogenicity_map.get(genome_id, 'unknown')
-        lbl.set_color(color_map.get(path, '#7f7f7f'))
+        pv = pathovar_map.get(genome_id, 'Unknown')
+        lbl.set_color(color_map.get(pv, '#7f7f7f'))
     
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches='tight')
@@ -376,7 +335,7 @@ def plot_group_comparisons(
     output_path: Path
 ) -> None:
     """
-    Gera boxplots comparando grupos de patogenicidade.
+    Gera boxplots comparando grupos por pathovar.
     
     Args:
         aggregated_df: DataFrame agregado
@@ -385,51 +344,45 @@ def plot_group_comparisons(
     """
     logger.info("Gerando boxplots comparativos...")
     
-    # Map pathovar to pathogenicity
-    if 'pathovar' in metadata_df.columns:
+    # Use pathovar directly as the group
+    if 'pathovar' not in metadata_df.columns:
         metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = metadata_df['pathovar'].apply(map_pathovar_to_pathogenicity)
-    elif 'pathogenicity' not in metadata_df.columns:
-        metadata_df = metadata_df.copy()
-        metadata_df['pathogenicity'] = 'unknown'
+        metadata_df['pathovar'] = 'Unknown'
     
     # Normalize genome_id format
+    metadata_df = metadata_df.copy()
     metadata_df['genome_id_normalized'] = metadata_df['genome_id'].astype(str).str.replace('.', '_')
     aggregated_df = aggregated_df.copy()
     aggregated_df['genome_id_normalized'] = aggregated_df['genome_id'].astype(str).str.replace('.', '_')
     
     # Merge com metadados usando genome_id_normalized
     merged = aggregated_df.merge(
-        metadata_df[['genome_id_normalized', 'pathogenicity']], 
+        metadata_df[['genome_id_normalized', 'pathovar']], 
         on='genome_id_normalized', 
         how='left'
     )
     
-    # Keep all groups (pathogenic, non-pathogenic, unknown)
-    merged = merged[merged['pathogenicity'].notna()]
+    # Keep all groups
+    merged = merged[merged['pathovar'].notna()]
     
     if len(merged) == 0:
         logger.warning("No data after merging with metadata, skipping boxplots")
         return
     
     # Calcula métricas por genoma
-    genome_metrics = merged.groupby(['genome_id_normalized', 'pathogenicity']).agg({
+    genome_metrics = merged.groupby(['genome_id_normalized', 'pathovar']).agg({
         'is_pseudogene': lambda x: (x.sum() / len(x)) * 100 if len(x) > 0 else 0,
         'score_density': 'mean',
         'frameshifts': 'sum',
         'premature_stop_codons': 'sum'
     }).reset_index()
     
-    genome_metrics.columns = ['genome_id', 'pathogenicity', 'pseudogene_rate', 'mean_score_density', 'total_frameshifts', 'total_premature_stops']
+    genome_metrics.columns = ['genome_id', 'pathovar', 'pseudogene_rate', 'mean_score_density', 'total_frameshifts', 'total_premature_stops']
     
-    # Define color palette dynamically
-    unique_groups = genome_metrics['pathogenicity'].unique()
-    color_palette = {
-        'pathogenic': '#d62728',
-        'non-pathogenic': '#2ca02c',
-        'unknown': '#7f7f7f'
-    }
-    palette = {group: color_palette.get(group, '#1f77b4') for group in unique_groups}
+    # Define color palette dynamically for unique pathovars
+    unique_pathovars = genome_metrics['pathovar'].unique()
+    color_palette_vals = plt.cm.Set3(range(len(unique_pathovars)))
+    palette = {pv: color_palette_vals[i] for i, pv in enumerate(unique_pathovars)}
     
     # Cria subplot
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -438,9 +391,9 @@ def plot_group_comparisons(
     if len(genome_metrics) > 0:
         sns.boxplot(
             data=genome_metrics,
-            x='pathogenicity',
+            x='pathovar',
             y='pseudogene_rate',
-            hue='pathogenicity',
+            hue='pathovar',
             palette=palette,
             legend=False,
             ax=axes[0, 0]
@@ -454,9 +407,9 @@ def plot_group_comparisons(
     if len(genome_metrics) > 0:
         sns.boxplot(
             data=genome_metrics,
-            x='pathogenicity',
+            x='pathovar',
             y='mean_score_density',
-            hue='pathogenicity',
+            hue='pathovar',
             palette=palette,
             legend=False,
             ax=axes[0, 1]
@@ -470,9 +423,9 @@ def plot_group_comparisons(
     if len(genome_metrics) > 0:
         sns.boxplot(
             data=genome_metrics,
-            x='pathogenicity',
+            x='pathovar',
             y='total_frameshifts',
-            hue='pathogenicity',
+            hue='pathovar',
             palette=palette,
             legend=False,
             ax=axes[1, 0]
@@ -486,9 +439,9 @@ def plot_group_comparisons(
     if len(genome_metrics) > 0:
         sns.boxplot(
             data=genome_metrics,
-            x='pathogenicity',
+            x='pathovar',
             y='total_premature_stops',
-            hue='pathogenicity',
+            hue='pathovar',
             palette=palette,
             legend=False,
             ax=axes[1, 1]
@@ -498,7 +451,7 @@ def plot_group_comparisons(
         axes[1, 1].set_xlabel('Grupo')
         axes[1, 1].tick_params(axis='x', rotation=45)
     
-    plt.suptitle('Comparação: Patogênicos vs Não-Patogênicos', fontsize=16, fontweight='bold', y=1.00)
+    plt.suptitle('Comparação por Pathovar', fontsize=16, fontweight='bold', y=1.00)
     plt.tight_layout()
     
     plt.savefig(output_path, bbox_inches='tight')
