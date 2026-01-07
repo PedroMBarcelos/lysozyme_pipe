@@ -138,11 +138,57 @@ def run_tblastn_search(
         return output_file
         
     except subprocess.CalledProcessError as e:
-        error_msg = f"Erro ao executar tblastn: {e.stderr}"
-        logger.error(error_msg)
-        raise BlastSearchError(error_msg) from e
+        # Check if it's a segmentation fault (SIGSEGV)
+        if e.returncode == -11 or 'SIGSEGV' in str(e):
+            logger.warning("BLAST crashed with SIGSEGV. Attempting retry with reduced threads...")
+            
+            # Retry with single thread as workaround for BLAST segfault bug
+            retry_command = command.copy()
+            for i, arg in enumerate(retry_command):
+                if arg == '-num_threads':
+                    retry_command[i+1] = '1'
+                    break
+            
+            try:
+                logger.debug(f"Retry command: {' '.join(retry_command)}")
+                result = subprocess.run(
+                    retry_command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=600  # 10 minute timeout
+                )
+                logger.info("BLAST succeeded with single thread (workaround for segfault)")
+                return output_file
+                
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as retry_error:
+                error_msg = (
+                    f"BLAST failed with SIGSEGV (segmentation fault).\n"
+                    f"This usually indicates:\n"
+                    f"  1. Corrupted BLAST+ installation\n"
+                    f"  2. Incompatible BLAST+ version\n"
+                    f"  3. Memory corruption or hardware issues\n\n"
+                    f"Troubleshooting steps:\n"
+                    f"  - Reinstall BLAST+: sudo apt remove ncbi-blast+ && sudo apt install ncbi-blast+\n"
+                    f"  - Or download latest from NCBI: https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/\n"
+                    f"  - Check system resources: free -h\n"
+                    f"  - Reduce threads: --num-threads 1\n\n"
+                    f"Original error: {e.stderr if e.stderr else 'SIGSEGV'}\n"
+                    f"Retry error: {retry_error}"
+                )
+                logger.error(error_msg)
+                raise BlastSearchError(error_msg) from e
+        else:
+            error_msg = f"Erro ao executar tblastn: {e.stderr}"
+            logger.error(error_msg)
+            raise BlastSearchError(error_msg) from e
+            
     except FileNotFoundError:
         error_msg = "tblastn não encontrado. Certifique-se de que o BLAST+ está instalado."
+        logger.error(error_msg)
+        raise BlastSearchError(error_msg)
+    except subprocess.TimeoutExpired:
+        error_msg = "BLAST search timeout (>10 minutes). Check system resources or reduce dataset size."
         logger.error(error_msg)
         raise BlastSearchError(error_msg)
 
